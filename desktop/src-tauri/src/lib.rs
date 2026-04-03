@@ -24,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::new())
         .manage(SharedAudioBuffer::new())
         .invoke_handler(tauri::generate_handler![
@@ -41,6 +42,8 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::structure_as_prompt,
+            commands::is_local_llm_downloaded,
+            commands::download_local_llm,
         ])
         .setup(|app| {
             // Build system tray menu

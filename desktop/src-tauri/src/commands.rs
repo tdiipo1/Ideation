@@ -255,7 +255,9 @@ pub fn save_settings(new_settings: AppSettings) -> Result<(), String> {
 #[tauri::command]
 pub async fn structure_as_prompt(transcript: String) -> Result<String, String> {
     let s = settings::load();
-    if s.llm_api_key.is_empty() {
+
+    // Local model doesn't need an API key
+    if s.llm_provider != "local" && s.llm_api_key.is_empty() {
         return Err("No API key configured. Go to Settings to add one.".to_string());
     }
 
@@ -270,6 +272,19 @@ pub async fn structure_as_prompt(transcript: String) -> Result<String, String> {
     };
 
     crate::structuring::structure_prompt(&config, &transcript).await
+}
+
+// Local LLM commands
+
+#[tauri::command]
+pub fn is_local_llm_downloaded() -> bool {
+    crate::structuring::is_local_model_downloaded()
+}
+
+#[tauri::command]
+pub async fn download_local_llm(app: AppHandle) -> Result<String, String> {
+    let path = crate::structuring::download_local_model(&app).await?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 // Model management commands

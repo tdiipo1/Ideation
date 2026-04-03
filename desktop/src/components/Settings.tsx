@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 interface AppSettings {
   shortcut: string;
@@ -170,14 +171,25 @@ export default function Settings() {
               onChange={(e) => update({ llm_provider: e.target.value })}
               className="w-full text-sm px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md focus:outline-none focus:border-blue-500"
             >
+              <option value="local">Phi-4-mini (local, free, offline)</option>
               <option value="gemini">Google Gemini (free)</option>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI (paid)</option>
+              <option value="anthropic">Anthropic (paid)</option>
               <option value="groq">Groq</option>
             </select>
+            {settings.llm_provider === "local" && (
+              <LocalModelStatus />
+            )}
+            {(settings.llm_provider === "openai" || settings.llm_provider === "anthropic") && (
+              <p className="text-xs text-amber-400 bg-amber-400/10 px-3 py-2 rounded-md mt-2">
+                This provider charges per API call. Usage costs are billed directly
+                by {settings.llm_provider === "openai" ? "OpenAI" : "Anthropic"} to
+                your account. Check their pricing page for current rates.
+              </p>
+            )}
           </div>
 
-          <div>
+          {settings.llm_provider !== "local" && <div>
             <label className="text-xs text-neutral-400 mb-1 block">
               API Key
             </label>
@@ -188,9 +200,9 @@ export default function Settings() {
               placeholder="sk-..."
               className="w-full text-sm px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md focus:outline-none focus:border-blue-500"
             />
-          </div>
+          </div>}
 
-          <div>
+          {settings.llm_provider !== "local" && <div>
             <label className="text-xs text-neutral-400 mb-1 block">
               Model (optional, leave blank for default)
             </label>
@@ -200,7 +212,7 @@ export default function Settings() {
               onChange={(e) => update({ llm_model: e.target.value })}
               placeholder={
                 settings.llm_provider === "gemini"
-                  ? "gemini-2.0-flash-lite"
+                  ? "gemini-2.5-flash"
                   : settings.llm_provider === "openai"
                     ? "gpt-4o-mini"
                     : settings.llm_provider === "anthropic"
@@ -209,7 +221,7 @@ export default function Settings() {
               }
               className="w-full text-sm px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md focus:outline-none focus:border-blue-500"
             />
-          </div>
+          </div>}
         </div>
       </section>
 
@@ -224,6 +236,63 @@ export default function Settings() {
       >
         {saved ? "Saved!" : "Save Settings"}
       </button>
+    </div>
+  );
+}
+
+function LocalModelStatus() {
+  const [downloaded, setDownloaded] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    invoke<boolean>("is_local_llm_downloaded").then(setDownloaded);
+
+    const unlisten = listen<{ progress: number; downloaded_mb: number; total_mb: number }>(
+      "phi-download-progress",
+      (event) => setProgress(event.payload.progress),
+    );
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  if (downloaded) {
+    return (
+      <p className="text-xs text-green-400 mt-2">
+        Phi-4-mini is ready. Prompt structuring works offline.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-2">
+      <p className="text-xs text-neutral-500 mb-2">
+        Phi-4-mini (~2.3 GB) runs entirely on your machine. No API key, no internet needed after download.
+      </p>
+      {downloading ? (
+        <div>
+          <div className="w-full h-2 bg-neutral-700 rounded-full overflow-hidden">
+            <div className="h-full bg-purple-500 transition-all" style={{ width: `${progress}%` }} />
+          </div>
+          <span className="text-xs text-neutral-500">{progress}%</span>
+        </div>
+      ) : (
+        <button
+          onClick={async () => {
+            setDownloading(true);
+            try {
+              await invoke("download_local_llm");
+              setDownloaded(true);
+            } catch (err) {
+              console.error(err);
+            } finally {
+              setDownloading(false);
+            }
+          }}
+          className="text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-500 rounded-md transition-colors"
+        >
+          Download Phi-4-mini (~2.3 GB)
+        </button>
+      )}
     </div>
   );
 }

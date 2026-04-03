@@ -34,6 +34,9 @@ dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 enigo = "0.2"
 rodio = { version = "0.20", default-features = false, features = ["wav"] }
+tauri-plugin-updater = "2"
+# Note: llama-cpp-2 conflicts with whisper-rs (duplicate ggml symbols)
+# Phi-4-mini runs via llama-server subprocess instead
 
 [profile.release]
 panic = "abort"

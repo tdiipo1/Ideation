@@ -22,3 +22,17 @@ desktop/src-tauri/icons/
 
 # Extension build
 extension/dist/
+extension/dist-lite/
+extension/dist-full/
+extension/release/*.zip
+
+# Lock files
+desktop/package-lock.json
+extension/package-lock.json
+desktop/src-tauri/Cargo.lock
+
+# Generated
+desktop/src-tauri/gen/
+
+# Claude settings
+.claude/

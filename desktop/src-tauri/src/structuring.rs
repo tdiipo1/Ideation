@@ -1,21 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-const SYSTEM_PROMPT: &str = r#"You are a prompt structuring assistant. The user recorded their thoughts by speaking out loud. Your job is to restructure their raw spoken transcript into a clear, well-organized prompt that can be sent to an AI assistant.
-
-Rules:
-- Preserve ALL meaning, intent, and details from the original
-- Do NOT add information that wasn't in the transcript
-- Organize into clear sections with headers if the content covers multiple topics
-- Use bullet points for lists of items or requirements
-- Fix grammar and remove filler words
-- Make it concise but complete
-- If the user was describing a task they want done, frame it as clear instructions
-- If the user was brainstorming, organize the ideas logically
-- Output ONLY the structured prompt, no meta-commentary"#;
+const SYSTEM_PROMPT: &str = "Restructure this spoken transcript into a clear, organized prompt for an AI assistant. Preserve all meaning and details. Use sections/headers for multiple topics, bullet points for lists. Fix grammar, remove filler words. Output only the structured prompt.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
-    pub provider: String, // "openai", "anthropic", "groq"
+    pub provider: String, // "gemini", "openai", "anthropic", "groq", "local"
     pub api_key: String,
     pub model: Option<String>,
 }
@@ -69,6 +58,7 @@ pub async fn structure_prompt(config: &LlmConfig, transcript: &str) -> Result<St
     let client = reqwest::Client::new();
 
     match config.provider.as_str() {
+        "local" => call_local(transcript).await,
         "gemini" => call_gemini(&client, config, transcript).await,
         "openai" => call_openai(&client, config, transcript).await,
         "anthropic" => call_anthropic(&client, config, transcript).await,
@@ -220,7 +210,7 @@ async fn call_gemini(
     let model = config
         .model
         .as_deref()
-        .unwrap_or("gemini-2.0-flash-lite");
+        .unwrap_or("gemini-2.5-flash");
 
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
@@ -256,4 +246,114 @@ async fn call_gemini(
         .and_then(|c| c.content.parts.first())
         .map(|p| p.text.clone())
         .ok_or_else(|| "No response from Gemini".to_string())
+}
+
+fn phi_model_path() -> std::path::PathBuf {
+    let base = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    base.join("com.ideation.desktop")
+        .join("models")
+        .join("Phi-4-mini-instruct-Q4_K_M.gguf")
+}
+
+pub fn is_local_model_downloaded() -> bool {
+    phi_model_path().exists()
+}
+
+pub async fn download_local_model(
+    app: &tauri::AppHandle,
+) -> Result<std::path::PathBuf, String> {
+    use futures_util::StreamExt;
+
+    let path = phi_model_path();
+    if path.exists() {
+        return Ok(path);
+    }
+
+    let dir = path.parent().unwrap();
+    std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create dir: {}", e))?;
+
+    let url = "https://huggingface.co/bartowski/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf";
+    let temp_path = path.with_extension("downloading");
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Download failed: {}", e))?;
+
+    let total_size = response.content_length().unwrap_or(0);
+    let mut file = std::fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create file: {}", e))?;
+    let mut downloaded: u64 = 0;
+
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
+        std::io::Write::write_all(&mut file, &chunk)
+            .map_err(|e| format!("Write error: {}", e))?;
+        downloaded += chunk.len() as u64;
+        if total_size > 0 {
+            let progress = (downloaded as f64 / total_size as f64 * 100.0) as u32;
+            let _ = tauri::Emitter::emit(
+                app,
+                "phi-download-progress",
+                serde_json::json!({ "progress": progress, "downloaded_mb": downloaded / 1_000_000, "total_mb": total_size / 1_000_000 }),
+            );
+        }
+    }
+
+    drop(file);
+    std::fs::rename(&temp_path, &path).map_err(|e| format!("Rename error: {}", e))?;
+    Ok(path)
+}
+
+async fn call_local(transcript: &str) -> Result<String, String> {
+    let model_path = phi_model_path();
+    if !model_path.exists() {
+        return Err(
+            "Phi-4-mini model not downloaded. Go to Settings and download it first.".to_string(),
+        );
+    }
+
+    // Call llama-server via OpenAI-compatible API (localhost:8080)
+    // User must start llama-server separately:
+    //   llama-server -m Phi-4-mini-instruct-Q4_K_M.gguf -c 2048
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "model": "phi-4-mini",
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": transcript}
+        ],
+        "temperature": 0.3,
+        "max_tokens": 1024
+    });
+
+    let resp = client
+        .post("http://127.0.0.1:8080/v1/chat/completions")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|_| {
+            "Could not connect to local LLM server. Start llama-server first:\n\n\
+             llama-server -m Phi-4-mini-instruct-Q4_K_M.gguf -c 2048\n\n\
+             Download llama-server from https://github.com/ggerganov/llama.cpp/releases"
+                .to_string()
+        })?;
+
+    if !resp.status().is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Local LLM error: {}", text));
+    }
+
+    let data: OpenAiResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    data.choices
+        .first()
+        .map(|c| c.message.content.clone())
+        .ok_or_else(|| "No response from local LLM".to_string())
 }

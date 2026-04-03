@@ -13,6 +13,7 @@
     "clipboard-manager:allow-read-text",
     "notification:default",
     "notification:allow-notify",
-    "shell:default"
+    "shell:default",
+    "updater:default"
   ]
 }
