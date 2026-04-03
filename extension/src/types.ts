@@ -37,6 +37,7 @@ export const DEFAULT_SETTINGS: ExtSettings = {
 // Shared Gemini API key — free tier, no billing attached, rate limited
 // Users see this labeled as "Ideation Shared (limited)"
 // Replace this with your own key from https://aistudio.google.com/apikey
-export const SHARED_GEMINI_KEY = "REPLACE_WITH_YOUR_GEMINI_KEY";
+// Set via VITE_SHARED_GEMINI_KEY env var at build time
+export const SHARED_GEMINI_KEY = import.meta.env.VITE_SHARED_GEMINI_KEY || "";
 
 declare module "*.css" {}
