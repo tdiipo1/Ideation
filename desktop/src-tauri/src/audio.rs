@@ -72,7 +72,7 @@ fn run_recording_thread(buffer: &Arc<SharedAudioBuffer>) -> Result<(), String> {
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     let mono: Vec<f32> = data
                         .chunks(channels)
-                        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+                        .map(|frame| frame[0])
                         .collect();
                     buf.samples.lock().extend_from_slice(&mono);
                 },
@@ -87,10 +87,7 @@ fn run_recording_thread(buffer: &Arc<SharedAudioBuffer>) -> Result<(), String> {
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
                     let mono: Vec<f32> = data
                         .chunks(channels)
-                        .map(|frame| {
-                            frame.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
-                                / channels as f32
-                        })
+                        .map(|frame| frame[0] as f32 / 32768.0)
                         .collect();
                     buf.samples.lock().extend_from_slice(&mono);
                 },
@@ -105,13 +102,7 @@ fn run_recording_thread(buffer: &Arc<SharedAudioBuffer>) -> Result<(), String> {
                 move |data: &[u16], _: &cpal::InputCallbackInfo| {
                     let mono: Vec<f32> = data
                         .chunks(channels)
-                        .map(|frame| {
-                            frame
-                                .iter()
-                                .map(|&s| (s as f32 - 32768.0) / 32768.0)
-                                .sum::<f32>()
-                                / channels as f32
-                        })
+                        .map(|frame| (frame[0] as f32 - 32768.0) / 32768.0)
                         .collect();
                     buf.samples.lock().extend_from_slice(&mono);
                 },
@@ -137,29 +128,176 @@ fn run_recording_thread(buffer: &Arc<SharedAudioBuffer>) -> Result<(), String> {
     Ok(())
 }
 
-/// Stop recording and return resampled 16kHz mono audio.
-pub fn stop_recording(buffer: &Arc<SharedAudioBuffer>) -> Result<Vec<f32>, String> {
-    *buffer.is_recording.lock() = false;
+/// Resample arbitrary mono f32 samples to 16kHz (Whisper's rate).
+/// Passthrough when already at 16kHz. Used to resample individual streaming
+/// segments independently of the full buffer.
+pub fn resample_to_16k(input: &[f32], from_rate: u32) -> Result<Vec<f32>, String> {
+    if input.is_empty() {
+        return Ok(Vec::new());
+    }
+    if from_rate == TARGET_SAMPLE_RATE {
+        return Ok(input.to_vec());
+    }
+    resample(input, from_rate, TARGET_SAMPLE_RATE)
+}
 
-    // Give the thread a moment to stop
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    let raw_audio = {
-        let buf = buffer.samples.lock();
-        buf.clone()
+/// Drain all captured raw samples and return the resampled-to-16kHz tail
+/// (everything from `cursor` onward) plus the total recording duration in
+/// seconds. `cursor` is an index into the raw device-rate sample buffer —
+/// the streaming worker reports how far it already transcribed.
+pub fn take_tail_16k(
+    buffer: &Arc<SharedAudioBuffer>,
+    cursor: usize,
+) -> Result<(Vec<f32>, f32), String> {
+    let raw = {
+        let mut buf = buffer.samples.lock();
+        std::mem::take(&mut *buf)
     };
-
-    if raw_audio.is_empty() {
+    if raw.is_empty() {
         return Err("No audio captured".to_string());
     }
-
     let source_rate = *buffer.source_sample_rate.lock();
+    let duration_secs = raw.len() as f32 / source_rate as f32;
+    let tail = if cursor < raw.len() {
+        resample_to_16k(&raw[cursor..], source_rate)?
+    } else {
+        Vec::new()
+    };
+    Ok((tail, duration_secs))
+}
 
-    if source_rate == TARGET_SAMPLE_RATE {
-        return Ok(raw_audio);
+// --- Energy-based VAD for streaming chunk boundaries ---
+// Mirrors extension/src/lib/vad.ts so both frontends segment audio the same
+// way. We cut at silence so Whisper never sees a word sliced mid-utterance.
+const VAD_FRAME_MS: usize = 30;
+const VAD_MIN_SEGMENT_MS: usize = 3000;
+const VAD_HARD_CAP_MS: usize = 20000;
+const VAD_SILENCE_MS: usize = 400;
+const VAD_ABS_FLOOR: f32 = 0.008;
+
+fn frame_rms(audio: &[f32]) -> f32 {
+    if audio.is_empty() {
+        return 0.0;
+    }
+    let sum: f32 = audio.iter().map(|x| x * x).sum();
+    (sum / audio.len() as f32).sqrt()
+}
+
+/// A chosen chunk boundary. `forced` is true when the cut happened at the
+/// hard cap (continuous speech, no pause found) rather than at silence —
+/// forced cuts get an overlap + word de-dup to avoid clipping words.
+pub struct CutPoint {
+    pub index: usize,
+    pub forced: bool,
+}
+
+/// Find a sample index (relative to the start of `audio`) to commit up to,
+/// or None if it's not yet time to cut. `audio` should be the un-committed
+/// region (i.e. already sliced from the cursor).
+pub fn find_cut_point(audio: &[f32], sample_rate: u32) -> Option<CutPoint> {
+    let sr = sample_rate as usize;
+    let frame = VAD_FRAME_MS * sr / 1000;
+    if frame == 0 {
+        return None;
+    }
+    let min_seg = VAD_MIN_SEGMENT_MS * sr / 1000;
+    let hard_cap = VAD_HARD_CAP_MS * sr / 1000;
+    let silence = VAD_SILENCE_MS * sr / 1000;
+
+    let len = audio.len();
+    if len < min_seg {
+        return None;
     }
 
-    resample(&raw_audio, source_rate, TARGET_SAMPLE_RATE)
+    // Noise floor relative to the loudest frame in the region.
+    let mut peak = 0.0f32;
+    let mut s = 0;
+    while s + frame <= len {
+        let rms = frame_rms(&audio[s..s + frame]);
+        if rms > peak {
+            peak = rms;
+        }
+        s += frame;
+    }
+    let threshold = VAD_ABS_FLOOR.max(0.2 * peak);
+
+    // Scan for a silence run beginning at least min_seg past the start.
+    let mut run_start: isize = -1;
+    let mut lowest = f32::INFINITY;
+    let mut lowest_sample: isize = -1;
+    let mut s = min_seg;
+    while s + frame <= len {
+        let rms = frame_rms(&audio[s..s + frame]);
+        if rms < lowest {
+            lowest = rms;
+            lowest_sample = s as isize;
+        }
+        if rms < threshold {
+            if run_start == -1 {
+                run_start = s as isize;
+            }
+            if (s + frame) as isize - run_start >= silence as isize {
+                return Some(CutPoint {
+                    index: run_start as usize,
+                    forced: false,
+                });
+            }
+        } else {
+            run_start = -1;
+        }
+        s += frame;
+    }
+
+    // No pause, but region too long — force a cut at the quietest frame.
+    if len >= hard_cap && lowest_sample > 0 {
+        return Some(CutPoint {
+            index: lowest_sample as usize,
+            forced: true,
+        });
+    }
+    None
+}
+
+/// Fraction of frames above the silence floor (0..1). Used to distinguish
+/// real speech from breath/noise blips when filtering Whisper's classic
+/// silence hallucinations ("Thank you." etc.).
+pub fn speech_ratio(audio: &[f32], sample_rate: u32) -> f32 {
+    let frame = VAD_FRAME_MS * sample_rate as usize / 1000;
+    if frame == 0 || audio.len() < frame {
+        return 0.0;
+    }
+    let mut voiced = 0u32;
+    let mut frames = 0u32;
+    let mut s = 0;
+    while s + frame <= audio.len() {
+        if frame_rms(&audio[s..s + frame]) >= VAD_ABS_FLOOR {
+            voiced += 1;
+        }
+        frames += 1;
+        s += frame;
+    }
+    if frames == 0 {
+        0.0
+    } else {
+        voiced as f32 / frames as f32
+    }
+}
+
+/// Whether the audio contains any speech above the silence floor.
+pub fn has_speech(audio: &[f32], sample_rate: u32) -> bool {
+    let sr = sample_rate as usize;
+    let frame = VAD_FRAME_MS * sr / 1000;
+    if frame == 0 || audio.len() < frame {
+        return false;
+    }
+    let mut s = 0;
+    while s + frame <= audio.len() {
+        if frame_rms(&audio[s..s + frame]) >= VAD_ABS_FLOOR {
+            return true;
+        }
+        s += frame;
+    }
+    false
 }
 
 fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Result<Vec<f32>, String> {

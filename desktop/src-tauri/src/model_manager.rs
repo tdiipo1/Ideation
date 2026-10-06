@@ -1,11 +1,13 @@
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModelInfo {
     pub name: String,
+    pub label: String,
+    pub description: String,
     pub filename: String,
     pub url: String,
     pub sha256: String,
@@ -13,9 +15,14 @@ pub struct ModelInfo {
 }
 
 pub fn available_models() -> Vec<ModelInfo> {
+    // SHA256 hashes are pinned for integrity verification when published.
+    // Empty sha256 means "skip verification" — used for upstream files that
+    // don't publish a hash (distil-* repos and the turbo quantized files).
     vec![
         ModelInfo {
             name: "base.en".to_string(),
+            label: "Base (English)".to_string(),
+            description: "Default — fast and accurate".to_string(),
             filename: "ggml-base.en.bin".to_string(),
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
                 .to_string(),
@@ -25,12 +32,45 @@ pub fn available_models() -> Vec<ModelInfo> {
         },
         ModelInfo {
             name: "small.en".to_string(),
+            label: "Small (English)".to_string(),
+            description: "Better accuracy, slower".to_string(),
             filename: "ggml-small.en.bin".to_string(),
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin"
                 .to_string(),
-            sha256: "20e05c75a65869a1a587e075ed4eea98bad3b0e65f1eaa1b4e5e37eea43e64fe"
+            sha256: "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d"
                 .to_string(),
             size_mb: 466,
+        },
+        ModelInfo {
+            name: "base".to_string(),
+            label: "Base (Multilingual)".to_string(),
+            description: "99 languages, slightly slower".to_string(),
+            filename: "ggml-base.bin".to_string(),
+            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+                .to_string(),
+            sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+                .to_string(),
+            size_mb: 142,
+        },
+        ModelInfo {
+            name: "large-v3-turbo".to_string(),
+            label: "Large v3 Turbo (Multilingual)".to_string(),
+            description: "Top quality, all languages. Best on fast machines.".to_string(),
+            filename: "ggml-large-v3-turbo-q5_0.bin".to_string(),
+            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin"
+                .to_string(),
+            sha256: "".to_string(),
+            size_mb: 574,
+        },
+        ModelInfo {
+            name: "distil-large-v3.5".to_string(),
+            label: "Distil Large v3.5 (English)".to_string(),
+            description: "Highest quality English. Best on fast machines, short clips.".to_string(),
+            filename: "ggml-distil-large-v3.5.bin".to_string(),
+            url: "https://huggingface.co/distil-whisper/distil-large-v3.5-ggml/resolve/main/ggml-model.bin"
+                .to_string(),
+            sha256: "".to_string(),
+            size_mb: 1520,
         },
     ]
 }
@@ -46,6 +86,26 @@ pub fn model_path(filename: &str) -> PathBuf {
 
 pub fn is_model_downloaded(filename: &str) -> bool {
     model_path(filename).exists()
+}
+
+/// On first launch, copy the bundled base.en model to the models directory
+pub fn ensure_bundled_model(app: &AppHandle) {
+    let dest = model_path("ggml-base.en.bin");
+    if dest.exists() {
+        return; // Already have it
+    }
+
+    // Create models directory
+    let dir = models_dir();
+    let _ = std::fs::create_dir_all(&dir);
+
+    // Try to find the bundled resource
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let bundled = resource_dir.join("resources").join("ggml-base.en.bin");
+        if bundled.exists() {
+            let _ = std::fs::copy(&bundled, &dest);
+        }
+    }
 }
 
 pub async fn download_model(app: &AppHandle, model: &ModelInfo) -> Result<PathBuf, String> {
@@ -76,6 +136,8 @@ pub async fn download_model(app: &AppHandle, model: &ModelInfo) -> Result<PathBu
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
     let mut hasher = Sha256::new();
+    let mut last_emit = std::time::Instant::now();
+    let mut last_progress: u32 = 0;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
@@ -84,31 +146,37 @@ pub async fn download_model(app: &AppHandle, model: &ModelInfo) -> Result<PathBu
         hasher.update(&chunk);
         downloaded += chunk.len() as u64;
 
-        // Emit progress every ~1%
-        if total_size > 0 {
+        // Throttle progress events to ~200ms intervals
+        if total_size > 0 && last_emit.elapsed() > std::time::Duration::from_millis(200) {
             let progress = (downloaded as f64 / total_size as f64 * 100.0) as u32;
-            let _ = app.emit(
-                "model-download-progress",
-                serde_json::json!({
-                    "model": model.name,
-                    "progress": progress,
-                    "downloaded_mb": downloaded / 1_000_000,
-                    "total_mb": total_size / 1_000_000,
-                }),
-            );
+            if progress != last_progress {
+                let _ = app.emit(
+                    "model-download-progress",
+                    serde_json::json!({
+                        "model": model.name,
+                        "progress": progress,
+                        "downloaded_mb": downloaded / 1_000_000,
+                        "total_mb": total_size / 1_000_000,
+                    }),
+                );
+                last_progress = progress;
+            }
+            last_emit = std::time::Instant::now();
         }
     }
 
     drop(file);
 
-    // Verify hash
-    let hash = hex::encode(hasher.finalize());
-    if hash != model.sha256 {
-        let _ = std::fs::remove_file(&temp_path);
-        return Err(format!(
-            "Hash mismatch: expected {}, got {}",
-            model.sha256, hash
-        ));
+    // Verify hash. Skip if upstream doesn't publish a SHA256 (empty string).
+    if !model.sha256.is_empty() {
+        let hash = hex::encode(hasher.finalize());
+        if hash != model.sha256 {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(format!(
+                "Hash mismatch: expected {}, got {}",
+                model.sha256, hash
+            ));
+        }
     }
 
     // Rename temp to final

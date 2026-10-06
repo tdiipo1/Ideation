@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { ExtSettings } from "../types";
 import { fetchGeminiModels, GeminiModel } from "../lib/structuring";
 import { SHARED_GEMINI_KEY } from "../types";
@@ -13,6 +13,7 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
   const [saved, setSaved] = useState(false);
   const [geminiModels, setGeminiModels] = useState<GeminiModel[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
+  const savedTimeoutRef = useRef<number | null>(null);
 
   const activeKey =
     settings.llmKeyMode === "shared" ? SHARED_GEMINI_KEY : settings.llmApiKey;
@@ -26,10 +27,26 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
     }
   }, [settings.llmProvider, activeKey]);
 
+  // Clear saved-feedback timeout on unmount to prevent state updates after unmount
+  useEffect(() => {
+    return () => {
+      if (savedTimeoutRef.current !== null) {
+        clearTimeout(savedTimeoutRef.current);
+        savedTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   function handleSave() {
     onSave();
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    if (savedTimeoutRef.current !== null) {
+      clearTimeout(savedTimeoutRef.current);
+    }
+    savedTimeoutRef.current = window.setTimeout(() => {
+      setSaved(false);
+      savedTimeoutRef.current = null;
+    }, 2000);
   }
 
   return (
@@ -38,12 +55,28 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
       <section>
         <h3 className="text-xs font-semibold text-neutral-400 mb-2">Whisper Model</h3>
         {[
-          { id: "onnx-community/whisper-tiny.en", label: "Tiny (English)", size: "~75 MB" },
-          { id: "onnx-community/whisper-base.en", label: "Base (English)", size: "~150 MB" },
+          {
+            id: "onnx-community/whisper-tiny.en",
+            label: "Tiny (English)",
+            size: "~75 MB",
+            note: "Default — fastest",
+          },
+          {
+            id: "onnx-community/whisper-base.en",
+            label: "Base (English)",
+            size: "~150 MB",
+            note: "Higher quality, slower than Tiny",
+          },
+          {
+            id: "onnx-community/whisper-base",
+            label: "Base (Multilingual)",
+            size: "~150 MB",
+            note: "99 languages, slightly slower",
+          },
         ].map((m) => (
           <label
             key={m.id}
-            className={`flex items-center gap-2 px-2.5 py-2 rounded border mb-1 cursor-pointer ${
+            className={`flex items-start gap-2 px-2.5 py-2 rounded border mb-1 cursor-pointer ${
               settings.modelId === m.id
                 ? "border-blue-500 bg-blue-500/10"
                 : "border-neutral-800 bg-neutral-900"
@@ -53,14 +86,19 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
               type="radio"
               checked={settings.modelId === m.id}
               onChange={() => onUpdate({ modelId: m.id })}
-              className="accent-blue-500"
+              className="accent-blue-500 mt-0.5"
             />
-            <span className="text-xs">{m.label}</span>
-            <span className="text-[10px] text-neutral-500">{m.size}</span>
+            <div className="flex flex-col flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xs">{m.label}</span>
+                <span className="text-[10px] text-neutral-500">{m.size}</span>
+              </div>
+              <span className="text-[10px] text-neutral-600">{m.note}</span>
+            </div>
           </label>
         ))}
         <p className="text-[10px] text-neutral-600 mt-1">
-          Changing model requires re-download on first use.
+          Changing model triggers a one-time download on first use, then caches locally.
         </p>
       </section>
 
@@ -83,6 +121,26 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
           <div>
             <span className="text-xs">Transcript healing</span>
             <p className="text-[10px] text-neutral-500">Remove filler words, fix capitalization</p>
+          </div>
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer mt-2">
+          <div
+            onClick={() => onUpdate({ insertIntoPage: !settings.insertIntoPage })}
+            className={`w-8 h-4 rounded-full transition-colors relative ${
+              settings.insertIntoPage ? "bg-blue-500" : "bg-neutral-700"
+            }`}
+          >
+            <div
+              className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                settings.insertIntoPage ? "translate-x-4" : "translate-x-0.5"
+              }`}
+            />
+          </div>
+          <div>
+            <span className="text-xs">Insert into page</span>
+            <p className="text-[10px] text-neutral-500">
+              Type the transcript into the focused text field automatically (also copied)
+            </p>
           </div>
         </label>
       </section>

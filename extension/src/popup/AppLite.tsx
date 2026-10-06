@@ -1,34 +1,58 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useWhisper } from "../hooks/useWhisper";
 import { useRecording } from "../hooks/useRecording";
 import { copyToClipboard } from "../lib/clipboard";
+import { insertIntoPage } from "../lib/insert";
 import ModelStatus from "../components/ModelStatus";
 import MicButton from "../components/MicButton";
 import TranscriptBox from "../components/TranscriptBox";
+import ShortcutHint from "../components/ShortcutHint";
 
 export default function AppLite() {
-  const { modelState, modelProgress, error, transcribe } = useWhisper(
-    "onnx-community/whisper-base.en",
+  const { modelState, modelProgress, error, transcribe, transcribeSegment } = useWhisper(
+    "onnx-community/whisper-tiny.en",
   );
-  const { state, toggle, micError, openInTab } = useRecording(transcribe);
+  const { state, toggle, micError, openInTab, partialText, audioLevel, notice } =
+    useRecording(transcribe, transcribeSegment);
   const [transcript, setTranscript] = useState<string | null>(null);
+  const [autoCopied, setAutoCopied] = useState(false);
+
+  // Keyboard shortcut (Alt+R): the service worker relays the command here.
+  const toggleRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    const listener = (
+      msg: { type?: string },
+      _sender: chrome.runtime.MessageSender,
+      sendResponse: (r?: unknown) => void,
+    ) => {
+      if (msg?.type === "toggle-recording") {
+        toggleRef.current();
+        sendResponse(true);
+      }
+    };
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
+  }, []);
 
   async function handleToggle() {
     if (state === "idle" && transcript) {
       setTranscript(null);
+      setAutoCopied(false);
     }
     const result = await toggle();
     if (result) {
       setTranscript(result.text);
-      await copyToClipboard(result.text);
+      const copied = await copyToClipboard(result.text);
+      setAutoCopied(copied);
     }
   }
+  toggleRef.current = handleToggle;
 
   return (
     <div className="flex flex-col h-full p-4 gap-3">
       <header className="flex items-center justify-between">
         <h1 className="text-lg font-bold italic text-orange-400">Ideation Lite</h1>
-        <span className="text-[10px] text-neutral-600">Alt+I</span>
+        <ShortcutHint className="text-[10px] text-neutral-600" />
       </header>
 
       <ModelStatus state={modelState} progress={modelProgress} error={error} accent="orange" />
@@ -47,15 +71,29 @@ export default function AppLite() {
         </div>
       )}
 
-      <MicButton state={state} onToggle={handleToggle} disabled={modelState !== "ready"} accent="orange" />
-      <TranscriptBox
-        text={transcript}
-        onCopy={(t) => copyToClipboard(t)}
+      <MicButton
+        state={state}
+        onToggle={handleToggle}
+        disabled={modelState !== "ready"}
         accent="orange"
+        audioLevel={audioLevel}
+      />
+      {notice && state === "idle" && !transcript && (
+        <p className="text-[10px] text-neutral-500 text-center -mt-2">{notice}</p>
+      )}
+      <TranscriptBox
+        text={state === "idle" ? transcript : partialText}
+        isRecording={state === "recording"}
+        isProcessing={state === "processing"}
+        audioLevel={audioLevel}
+        onCopy={(t) => copyToClipboard(t)}
+        onInsert={(t) => insertIntoPage(t)}
+        accent="orange"
+        autoCopied={autoCopied}
       />
 
       <footer className="text-[10px] text-neutral-700 text-center mt-auto pt-2">
-        Alt+I to toggle
+        <ShortcutHint variant="verbose" />
       </footer>
     </div>
   );

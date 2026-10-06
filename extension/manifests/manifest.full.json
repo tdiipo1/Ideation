@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ideation",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "Voice-to-text with history, healing, and settings. Powered by local Whisper AI.",
   "action": {
     "default_icon": {
@@ -18,7 +18,7 @@
   "side_panel": {
     "default_path": "popup.html"
   },
-  "permissions": ["sidePanel", "storage", "tabs"],
+  "permissions": ["sidePanel", "storage", "clipboardWrite", "scripting", "activeTab"],
   "host_permissions": [
     "https://huggingface.co/*",
     "https://*.huggingface.co/*",
@@ -36,8 +36,12 @@
   },
   "commands": {
     "_execute_action": {
-      "suggested_key": { "default": "Alt+I" },
+      "suggested_key": { "default": "Alt+I", "mac": "MacCtrl+I" },
       "description": "Open Ideation"
+    },
+    "toggle-recording": {
+      "suggested_key": { "default": "Alt+R", "mac": "MacCtrl+R" },
+      "description": "Start/stop recording"
     }
   },
   "content_security_policy": {

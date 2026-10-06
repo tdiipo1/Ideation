@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ideation Lite",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "Quick voice-to-text: record, transcribe, copy. Powered by local Whisper AI.",
   "action": {
     "default_icon": {
@@ -18,7 +18,7 @@
   "side_panel": {
     "default_path": "popup.html"
   },
-  "permissions": ["sidePanel", "tabs"],
+  "permissions": ["sidePanel", "clipboardWrite", "scripting", "activeTab"],
   "host_permissions": [
     "https://huggingface.co/*",
     "https://*.huggingface.co/*",
@@ -32,8 +32,12 @@
   },
   "commands": {
     "_execute_action": {
-      "suggested_key": { "default": "Alt+I" },
-      "description": "Open Ideation"
+      "suggested_key": { "default": "Alt+I", "mac": "MacCtrl+I" },
+      "description": "Open Ideation Lite"
+    },
+    "toggle-recording": {
+      "suggested_key": { "default": "Alt+R", "mac": "MacCtrl+R" },
+      "description": "Start/stop recording"
     }
   },
   "content_security_policy": {

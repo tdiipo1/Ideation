@@ -25,11 +25,15 @@ extension/dist/
 extension/dist-lite/
 extension/dist-full/
 extension/release/*.zip
+extension/*.zip
 
 # Lock files
 desktop/package-lock.json
 extension/package-lock.json
 desktop/src-tauri/Cargo.lock
+
+# Bundled models (too large for git)
+desktop/src-tauri/resources/*.bin
 
 # Generated
 desktop/src-tauri/gen/

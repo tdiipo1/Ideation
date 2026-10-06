@@ -39,27 +39,52 @@ export default defineConfig({
           console.warn("Could not copy ORT files from transformers:", e);
         }
 
-        // CRITICAL: Patch popup.js to replace CDN URLs with local paths
-        // Transformers.js hardcodes a CDN URL for dynamic import() of the ONNX Runtime
-        // Chrome MV3 blocks all external script loads, so we redirect to our local copy
-        const popupJs = resolve(out, "popup.js");
+        // CRITICAL: Patch CDN URLs to local paths in ALL output JS files.
+        // Transformers.js hardcodes a CDN URL for the dynamic import() of the
+        // ONNX Runtime; Chrome MV3 CSP blocks external script loads. The ORT
+        // files are copied to the extension root above, so we rewrite the CDN
+        // base to an absolute "/" — this resolves from the extension root no
+        // matter which file (popup.js, a shared chunk, or the worker) performs
+        // the import. We must scan every .js file because adding the worker
+        // entry causes Rollup to split Transformers.js into shared chunks.
+        const cdnRe =
+          /https:\/\/cdn\.jsdelivr\.net\/npm\/@huggingface\/transformers@[^/]+\/dist\//g;
+        const patchJsInDir = (dir: string) => {
+          for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            const full = resolve(dir, entry.name);
+            if (entry.isDirectory()) {
+              patchJsInDir(full);
+            } else if (entry.name.endsWith(".js")) {
+              const code = readFileSync(full, "utf-8");
+              if (cdnRe.test(code)) {
+                writeFileSync(full, code.replace(cdnRe, "/"));
+                console.log(`Patched ${entry.name}: CDN URLs replaced with local paths`);
+              }
+            }
+          }
+        };
         try {
-          let code = readFileSync(popupJs, "utf-8");
-          // Replace any CDN URL pointing to the ort mjs file with a local relative path
-          code = code.replace(
-            /https:\/\/cdn\.jsdelivr\.net\/npm\/@huggingface\/transformers@[^/]+\/dist\//g,
-            "./"
-          );
-          writeFileSync(popupJs, code);
-          console.log(`Patched popup.js: CDN URLs replaced with local paths`);
+          patchJsInDir(out);
         } catch (e) {
-          console.warn("Could not patch popup.js:", e);
+          console.warn("Could not patch CDN URLs:", e);
         }
       },
     },
   ],
   define: {
     "import.meta.env.VITE_EDITION": JSON.stringify(edition),
+  },
+  // The Whisper worker is an ES module ({ type: "module" }); emit it (and its
+  // chunks) as ES so imports resolve under the extension's 'self' CSP.
+  worker: {
+    format: "es",
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/[name].js",
+        chunkFileNames: "assets/[name].js",
+        assetFileNames: "assets/[name].[ext]",
+      },
+    },
   },
   build: {
     outDir,

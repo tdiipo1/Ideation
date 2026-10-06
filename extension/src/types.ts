@@ -23,15 +23,21 @@ export interface ExtSettings {
   llmKeyMode: "shared" | "own";
   llmApiKey: string;
   llmModel: string;
+  /** Auto-insert the transcript into the focused field on the active tab. */
+  insertIntoPage: boolean;
+  /** User dismissed the "your device can run a better model" banner. */
+  modelNudgeDismissed: boolean;
 }
 
 export const DEFAULT_SETTINGS: ExtSettings = {
   healingEnabled: true,
-  modelId: "onnx-community/whisper-base.en",
+  modelId: "onnx-community/whisper-tiny.en",
   llmProvider: "gemini",
   llmKeyMode: "shared",
   llmApiKey: "",
   llmModel: "",
+  insertIntoPage: false,
+  modelNudgeDismissed: false,
 };
 
 // Shared Gemini API key — free tier, no billing attached, rate limited

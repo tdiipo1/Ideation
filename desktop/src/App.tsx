@@ -10,7 +10,7 @@ import { useRecording } from "./hooks/useRecording";
 type Tab = "record" | "history" | "settings";
 
 function App() {
-  const { state, transcript, toggle, copyToClipboard } = useRecording();
+  const { state, transcript, toggle, copyToClipboard, audioLevel, notice } = useRecording();
   const [tab, setTab] = useState<Tab>("record");
   const [historyRefresh, setHistoryRefresh] = useState(0);
 
@@ -57,10 +57,15 @@ function App() {
           <>
             <ModelDownloader />
             <StatusIndicator state={state} onToggle={toggle} />
+            {notice && state === "idle" && (
+              <p className="text-xs text-neutral-500 text-center">{notice}</p>
+            )}
             <TranscriptView
               transcript={transcript}
               onCopy={copyToClipboard}
               isProcessing={state === "processing"}
+              isRecording={state === "recording"}
+              audioLevel={audioLevel}
             />
           </>
         )}

@@ -36,16 +36,18 @@ pub fn run() {
             commands::get_available_models,
             commands::is_model_downloaded,
             commands::download_model,
+            commands::preload_model,
             commands::get_history,
             commands::delete_history_entry,
             commands::clear_history,
             commands::get_settings,
             commands::save_settings,
             commands::structure_as_prompt,
-            commands::is_local_llm_downloaded,
-            commands::download_local_llm,
         ])
         .setup(|app| {
+            // Extract bundled Whisper model on first launch
+            model_manager::ensure_bundled_model(app.handle());
+
             // Build system tray menu
             let quit = MenuItem::with_id(app, "quit", "Quit Ideation", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;

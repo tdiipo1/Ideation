@@ -5,6 +5,8 @@ interface MicButtonProps {
   onToggle: () => void;
   disabled?: boolean;
   accent?: "blue" | "orange";
+  /** Live mic level (0..1) — drives the pulsing ring while recording. */
+  audioLevel?: number;
 }
 
 const accents = {
@@ -12,18 +14,27 @@ const accents = {
   orange: { idle: "bg-orange-500 hover:bg-orange-600 shadow-orange-500/30", copy: "bg-orange-600 hover:bg-orange-500" },
 };
 
-export default function MicButton({ state, onToggle, disabled, accent = "blue" }: MicButtonProps) {
+export default function MicButton({ state, onToggle, disabled, accent = "blue", audioLevel = 0 }: MicButtonProps) {
   const colors = accents[accent];
   const isRecording = state === "recording";
   const isProcessing = state === "processing";
 
   return (
     <div className="flex flex-col items-center gap-3 py-4">
+      <div className="relative w-20 h-20">
+        {/* Voice-reactive ring: scales with the live mic level so the user
+            can see the mic is hearing them before any captions appear. */}
+        {isRecording && (
+          <div
+            className="absolute inset-0 rounded-full bg-red-500/25 transition-transform duration-100 pointer-events-none"
+            style={{ transform: `scale(${1 + audioLevel * 0.45})` }}
+          />
+        )}
       <button
         onClick={onToggle}
         disabled={disabled || isProcessing}
         className={`
-          w-20 h-20 rounded-full flex items-center justify-center transition-all duration-200
+          relative w-20 h-20 rounded-full flex items-center justify-center transition-all duration-200
           ${isRecording
             ? "bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/30 animate-pulse"
             : isProcessing
@@ -50,6 +61,7 @@ export default function MicButton({ state, onToggle, disabled, accent = "blue" }
           </svg>
         )}
       </button>
+      </div>
       <p className="text-xs text-neutral-500">
         {isRecording
           ? "Recording... Click to stop"

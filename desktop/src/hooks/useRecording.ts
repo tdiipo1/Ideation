@@ -2,6 +2,9 @@ import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+// Auto-copy is now performed in the Rust backend (see stop_recording) so it
+// works even when the main window is hidden. The manual copy button below
+// still uses writeText.
 
 type RecordingState = "idle" | "recording" | "processing";
 
@@ -16,10 +19,22 @@ export interface TranscriptResult {
 export function useRecording() {
   const [state, setState] = useState<RecordingState>("idle");
   const [transcript, setTranscript] = useState<TranscriptResult | null>(null);
+  // Smoothed mic input level (0..1) for the live meter.
+  const [audioLevel, setAudioLevel] = useState(0);
+  // One-shot user-facing notice, e.g. "No speech detected".
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    let level = 0;
     const unlistenState = listen<string>("recording-state-changed", (event) => {
       setState(event.payload as RecordingState);
+      if (event.payload === "recording") {
+        setNotice(null);
+      }
+      if (event.payload !== "recording") {
+        level = 0;
+        setAudioLevel(0);
+      }
     });
 
     const unlistenTranscript = listen<TranscriptResult>(
@@ -29,14 +44,21 @@ export function useRecording() {
       },
     );
 
-    const unlistenAutoCopy = listen<string>("auto-copy", async (event) => {
-      await writeText(event.payload);
+    // Fast attack, slow decay — reads naturally on a meter.
+    const unlistenLevel = listen<number>("audio-level", (event) => {
+      level = Math.max(Math.min(event.payload * 4, 1), level * 0.82);
+      setAudioLevel(level);
+    });
+
+    const unlistenNoSpeech = listen("no-speech", () => {
+      setNotice("No speech detected");
     });
 
     return () => {
       unlistenState.then((fn) => fn());
       unlistenTranscript.then((fn) => fn());
-      unlistenAutoCopy.then((fn) => fn());
+      unlistenLevel.then((fn) => fn());
+      unlistenNoSpeech.then((fn) => fn());
     };
   }, []);
 
@@ -59,5 +81,5 @@ export function useRecording() {
     [transcript],
   );
 
-  return { state, transcript, toggle, copyToClipboard };
+  return { state, transcript, toggle, copyToClipboard, audioLevel, notice };
 }

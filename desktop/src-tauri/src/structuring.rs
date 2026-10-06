@@ -54,11 +54,16 @@ struct GeminiPart {
     text: String,
 }
 
-pub async fn structure_prompt(config: &LlmConfig, transcript: &str) -> Result<String, String> {
+pub async fn structure_prompt(
+    app: &tauri::AppHandle,
+    config: &LlmConfig,
+    transcript: &str,
+) -> Result<String, String> {
     let client = reqwest::Client::new();
 
     match config.provider.as_str() {
-        "local" => call_local(transcript).await,
+        "local" => call_local(app, transcript).await,
+        "gemma4" => call_gemma4_local(app, transcript).await,
         "gemini" => call_gemini(&client, config, transcript).await,
         "openai" => call_openai(&client, config, transcript).await,
         "anthropic" => call_anthropic(&client, config, transcript).await,
@@ -248,112 +253,152 @@ async fn call_gemini(
         .ok_or_else(|| "No response from Gemini".to_string())
 }
 
-fn phi_model_path() -> std::path::PathBuf {
-    let base = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    base.join("com.ideation.desktop")
-        .join("models")
-        .join("Phi-4-mini-instruct-Q4_K_M.gguf")
-}
+// --- Ollama-based local inference ---
+// Ollama runs as a background service and auto-detects installed models.
+// No manual setup needed — if the user has Ollama installed, it just works.
 
-pub fn is_local_model_downloaded() -> bool {
-    phi_model_path().exists()
-}
+const OLLAMA_BASE: &str = "http://127.0.0.1:11434";
 
-pub async fn download_local_model(
-    app: &tauri::AppHandle,
-) -> Result<std::path::PathBuf, String> {
-    use futures_util::StreamExt;
+// Preferred models in order — we pick the first one the user has installed
+const PHI_MODELS: &[&str] = &["phi4-mini", "phi4", "phi3", "phi3:mini"];
+const GEMMA_MODELS: &[&str] = &["gemma4:e2b", "gemma4", "gemma3", "gemma2"];
 
-    let path = phi_model_path();
-    if path.exists() {
-        return Ok(path);
-    }
+/// List all models installed in Ollama
+async fn list_ollama_models() -> Result<Vec<String>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
 
-    let dir = path.parent().unwrap();
-    std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create dir: {}", e))?;
-
-    let url = "https://huggingface.co/bartowski/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf";
-    let temp_path = path.with_extension("downloading");
-
-    let client = reqwest::Client::new();
-    let response = client
-        .get(url)
+    let resp = client
+        .get(format!("{}/api/tags", OLLAMA_BASE))
         .send()
         .await
-        .map_err(|e| format!("Download failed: {}", e))?;
+        .map_err(|_| {
+            "Ollama is not running. Install it from https://ollama.com and make sure it's started."
+                .to_string()
+        })?;
 
-    let total_size = response.content_length().unwrap_or(0);
-    let mut file = std::fs::File::create(&temp_path)
-        .map_err(|e| format!("Failed to create file: {}", e))?;
-    let mut downloaded: u64 = 0;
-
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
-        std::io::Write::write_all(&mut file, &chunk)
-            .map_err(|e| format!("Write error: {}", e))?;
-        downloaded += chunk.len() as u64;
-        if total_size > 0 {
-            let progress = (downloaded as f64 / total_size as f64 * 100.0) as u32;
-            let _ = tauri::Emitter::emit(
-                app,
-                "phi-download-progress",
-                serde_json::json!({ "progress": progress, "downloaded_mb": downloaded / 1_000_000, "total_mb": total_size / 1_000_000 }),
-            );
-        }
+    #[derive(Deserialize)]
+    struct TagsResponse {
+        models: Vec<ModelEntry>,
+    }
+    #[derive(Deserialize)]
+    struct ModelEntry {
+        name: String,
     }
 
-    drop(file);
-    std::fs::rename(&temp_path, &path).map_err(|e| format!("Rename error: {}", e))?;
-    Ok(path)
+    let data: TagsResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Ollama response: {}", e))?;
+
+    Ok(data.models.into_iter().map(|m| m.name).collect())
 }
 
-async fn call_local(transcript: &str) -> Result<String, String> {
-    let model_path = phi_model_path();
-    if !model_path.exists() {
-        return Err(
-            "Phi-4-mini model not downloaded. Go to Settings and download it first.".to_string(),
-        );
+/// Find the best matching model from a preference list
+fn pick_model(installed: &[String], preferences: &[&str]) -> Option<String> {
+    for pref in preferences {
+        for installed_name in installed {
+            // Match "phi4" against "phi4:latest", "gemma4" against "gemma4:latest", etc.
+            let base = installed_name.split(':').next().unwrap_or(installed_name);
+            if base == *pref || installed_name == *pref {
+                return Some(installed_name.clone());
+            }
+        }
     }
+    None
+}
 
-    // Call llama-server via OpenAI-compatible API (localhost:8080)
-    // User must start llama-server separately:
-    //   llama-server -m Phi-4-mini-instruct-Q4_K_M.gguf -c 2048
-    let client = reqwest::Client::new();
+/// Call Ollama with streaming — emits chunks to the frontend for live updates
+pub async fn call_ollama_streaming(
+    app: &tauri::AppHandle,
+    model: &str,
+    transcript: &str,
+) -> Result<String, String> {
+    use futures_util::StreamExt;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
     let body = serde_json::json!({
-        "model": "phi-4-mini",
+        "model": model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": transcript}
         ],
-        "temperature": 0.3,
-        "max_tokens": 1024
+        "stream": true,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": 1024
+        }
     });
 
     let resp = client
-        .post("http://127.0.0.1:8080/v1/chat/completions")
+        .post(format!("{}/api/chat", OLLAMA_BASE))
         .json(&body)
         .send()
         .await
         .map_err(|_| {
-            "Could not connect to local LLM server. Start llama-server first:\n\n\
-             llama-server -m Phi-4-mini-instruct-Q4_K_M.gguf -c 2048\n\n\
-             Download llama-server from https://github.com/ggerganov/llama.cpp/releases"
+            "Ollama is not running. Install it from https://ollama.com and make sure it's started."
                 .to_string()
         })?;
 
     if !resp.status().is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("Local LLM error: {}", text));
+        return Err(format!("Ollama error: {}", text));
     }
 
-    let data: OpenAiResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let mut full_response = String::new();
+    let mut stream = resp.bytes_stream();
 
-    data.choices
-        .first()
-        .map(|c| c.message.content.clone())
-        .ok_or_else(|| "No response from local LLM".to_string())
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
+        for line in chunk.split(|&b| b == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(obj) = serde_json::from_slice::<serde_json::Value>(line) {
+                if let Some(content) = obj["message"]["content"].as_str() {
+                    if !content.is_empty() {
+                        full_response.push_str(content);
+                        let _ = tauri::Emitter::emit(
+                            app,
+                            "structuring-chunk",
+                            content,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(full_response)
+}
+
+async fn resolve_and_call_ollama(
+    app: &tauri::AppHandle,
+    preferences: &[&str],
+    family_name: &str,
+    transcript: &str,
+) -> Result<String, String> {
+    let installed = list_ollama_models().await?;
+    let model = pick_model(&installed, preferences).ok_or_else(|| {
+        format!(
+            "No {} model found in Ollama. Pull one first:\n  ollama pull {}",
+            family_name,
+            preferences[0]
+        )
+    })?;
+    call_ollama_streaming(app, &model, transcript).await
+}
+
+async fn call_local(app: &tauri::AppHandle, transcript: &str) -> Result<String, String> {
+    resolve_and_call_ollama(app, PHI_MODELS, "Phi", transcript).await
+}
+
+async fn call_gemma4_local(app: &tauri::AppHandle, transcript: &str) -> Result<String, String> {
+    resolve_and_call_ollama(app, GEMMA_MODELS, "Gemma", transcript).await
 }
