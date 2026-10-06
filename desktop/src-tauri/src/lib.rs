@@ -44,10 +44,16 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::structure_as_prompt,
+            commands::get_model_status,
+            commands::get_build_info,
         ])
         .setup(|app| {
             // Extract bundled Whisper model on first launch
             model_manager::ensure_bundled_model(app.handle());
+
+            // Warm the model cache now so the first recording doesn't pay the
+            // load cost (and the UI can show "Loading model…" meanwhile).
+            commands::preload_in_background(app.handle().clone());
 
             // Build system tray menu
             let quit = MenuItem::with_id(app, "quit", "Quit Ideation", true, None::<&str>)?;

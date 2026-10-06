@@ -39,6 +39,13 @@ tauri-plugin-updater = "2"
 # Note: llama-cpp-2 conflicts with whisper-rs (duplicate ggml symbols)
 # Phi-4-mini runs via llama-server subprocess instead
 
+[features]
+default = []
+# GPU inference. Windows/Linux: needs the LunarG Vulkan SDK at build time
+# (VULKAN_SDK env var, glslc on PATH). macOS: Metal, no extra setup.
+gpu-vulkan = ["whisper-rs/vulkan"]
+gpu-metal = ["whisper-rs/metal"]
+
 [profile.release]
 panic = "abort"
 codegen-units = 1

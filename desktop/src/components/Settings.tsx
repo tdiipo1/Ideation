@@ -37,6 +37,7 @@ export default function Settings() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [preloading, setPreloading] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [gpuBackend, setGpuBackend] = useState<string>("none");
 
   useEffect(() => {
     loadData();
@@ -56,6 +57,10 @@ export default function Settings() {
   async function loadData() {
     const s = await invoke<AppSettings>("get_settings");
     setSettings(s);
+
+    invoke<{ gpu_backend: string; version: string }>("get_build_info")
+      .then((info) => setGpuBackend(info.gpu_backend))
+      .catch(() => {});
 
     const m = await invoke<ModelInfo[]>("get_available_models");
     setModels(m);
@@ -285,6 +290,14 @@ export default function Settings() {
             checked={settings.sound_feedback}
             onChange={(v) => update({ sound_feedback: v })}
           />
+          {gpuBackend !== "none" && (
+            <Toggle
+              label={`GPU acceleration (${gpuBackend})`}
+              description="Run Whisper on the graphics card. Falls back to the CPU if the GPU can't load the model. Takes effect on the next model load."
+              checked={settings.use_gpu}
+              onChange={(v) => update({ use_gpu: v })}
+            />
+          )}
         </div>
       </section>
 

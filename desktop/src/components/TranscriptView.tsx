@@ -18,6 +18,8 @@ interface TranscriptViewProps {
   audioLevel?: number;
   /** Language detected/locked for the current or last recording. */
   detectedLanguage?: string | null;
+  /** Seconds of captured audio the backend hasn't transcribed yet. */
+  backlogSecs?: number;
 }
 
 function LanguageChip({ code }: { code: string | null | undefined }) {
@@ -66,7 +68,9 @@ export default function TranscriptView({
   isRecording,
   audioLevel = 0,
   detectedLanguage = null,
+  backlogSecs = 0,
 }: TranscriptViewProps) {
+  const behind = Math.round(backlogSecs);
   const [viewMode, setViewMode] = useState<ViewMode>("healed");
   const [structured, setStructured] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState<string | null>(null);
@@ -276,7 +280,9 @@ export default function TranscriptView({
               <p className="text-neutral-400 text-sm">Listening…</p>
             </div>
           ) : (
-            <p className="text-neutral-500 text-sm animate-pulse">Transcribing audio...</p>
+            <p className="text-neutral-500 text-sm animate-pulse">
+              {behind > 1 ? `Transcribing audio… ${behind} s left` : "Transcribing audio..."}
+            </p>
           )
         ) : structuring && !streamingText ? (
           <p className="text-neutral-500 text-sm animate-pulse">
@@ -295,10 +301,14 @@ export default function TranscriptView({
           {isRecording ? (
             <>
               <LevelBars level={audioLevel} />
-              <span className="text-xs text-neutral-500">Listening…</span>
+              <span className="text-xs text-neutral-500">
+                {behind > 2 ? `Transcribing… (${behind} s behind)` : "Listening…"}
+              </span>
             </>
           ) : (
-            <span className="text-xs text-neutral-500 animate-pulse">Finishing up…</span>
+            <span className="text-xs text-neutral-500 animate-pulse">
+              {behind > 1 ? `Finishing up… (${behind} s left)` : "Finishing up…"}
+            </span>
           )}
         </div>
       )}

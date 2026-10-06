@@ -25,6 +25,8 @@ export function useRecording() {
   const [notice, setNotice] = useState<string | null>(null);
   // Language the backend detected/locked for the current or last recording.
   const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
+  // Seconds of captured audio the backend hasn't transcribed yet.
+  const [backlogSecs, setBacklogSecs] = useState(0);
 
   useEffect(() => {
     let level = 0;
@@ -70,6 +72,13 @@ export function useRecording() {
       setNotice(event.payload);
     });
 
+    const unlistenStatus = listen<{ transcribing: boolean; backlog_secs: number }>(
+      "transcribe-status",
+      (event) => {
+        setBacklogSecs(event.payload.backlog_secs);
+      },
+    );
+
     // Any failure between stop and transcript (mic died, model missing,
     // inference error). The backend has already returned to idle.
     const unlistenError = listen<{ code: string; message: string }>(
@@ -87,6 +96,7 @@ export function useRecording() {
       unlistenError.then((fn) => fn());
       unlistenLanguage.then((fn) => fn());
       unlistenNotice.then((fn) => fn());
+      unlistenStatus.then((fn) => fn());
     };
   }, []);
 
@@ -109,5 +119,14 @@ export function useRecording() {
     [transcript],
   );
 
-  return { state, transcript, toggle, copyToClipboard, audioLevel, notice, detectedLanguage };
+  return {
+    state,
+    transcript,
+    toggle,
+    copyToClipboard,
+    audioLevel,
+    notice,
+    detectedLanguage,
+    backlogSecs,
+  };
 }

@@ -1,17 +1,25 @@
 fn main() {
-    // IMPORTANT: whisper-rs-sys reads GGML_* env vars to configure cmake.
-    // On Windows/MSVC, GGML_NATIVE=ON does nothing (no -march=native support),
-    // so AVX2/FMA must be enabled explicitly.
+    // whisper-rs-sys forwards GGML_* environment variables to CMake, but it
+    // keeps whatever flags its *cached* build was configured with: changing
+    // the variables only takes effect after deleting
+    // target/<profile>/build/whisper-rs-sys-* so CMake reconfigures.
     //
-    // These env vars must be set at the SHELL level before building:
-    //   export GGML_NATIVE=OFF GGML_AVX=ON GGML_AVX2=ON GGML_FMA=ON GGML_F16C=ON
+    // For a distributable release build set (shell level):
+    //   GGML_NATIVE=OFF GGML_AVX=ON GGML_AVX2=ON GGML_FMA=ON GGML_F16C=ON
+    // which targets x86-64-v3 (the binary then requires AVX2 hardware, i.e.
+    // any x86 CPU since ~2013). GGML_NATIVE=ON tunes for the build machine
+    // and may not run elsewhere. See README "Building".
     //
-    // Or on Windows cmd:
-    //   set GGML_NATIVE=OFF && set GGML_AVX=ON && set GGML_AVX2=ON && set GGML_FMA=ON && set GGML_F16C=ON
-
-    // Warn if AVX2 is not enabled (common mistake on Windows)
-    if std::env::var("GGML_AVX2").unwrap_or_default() != "ON" {
-        println!("cargo:warning=GGML_AVX2 is not set to ON. Whisper will be very slow without AVX2. Set GGML_NATIVE=OFF GGML_AVX2=ON GGML_FMA=ON in your environment.");
+    // GPU: build with `--features gpu-vulkan` (Windows/Linux, needs the
+    // Vulkan SDK: VULKAN_SDK + glslc) or `--features gpu-metal` (macOS).
+    let is_release = std::env::var("PROFILE").map(|p| p == "release").unwrap_or(false);
+    let avx2_requested = std::env::var("GGML_AVX2").map(|v| v == "ON").unwrap_or(false);
+    if is_release && !avx2_requested {
+        println!(
+            "cargo:warning=GGML_AVX2 is not set in this environment. whisper-rs-sys keeps the \
+             flags of its cached build; for a fresh release build set GGML_NATIVE=OFF \
+             GGML_AVX2=ON GGML_FMA=ON GGML_F16C=ON so Whisper runs at full speed."
+        );
     }
 
     tauri_build::build()

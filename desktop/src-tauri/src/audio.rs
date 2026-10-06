@@ -314,6 +314,39 @@ pub fn speech_ratio(audio: &[f32], sample_rate: u32) -> f32 {
     }
 }
 
+/// Split a long clip into pieces Whisper can take in one window (≤ 28 s),
+/// cutting at the quietest 30 ms frame between 18 s and 28 s of each piece so
+/// a word is never sliced. Returns `(start, end)` sample ranges.
+pub fn split_for_whisper(audio: &[f32], sample_rate: u32) -> Vec<(usize, usize)> {
+    let sr = sample_rate as usize;
+    let max = 28 * sr;
+    if audio.len() <= max {
+        return vec![(0, audio.len())];
+    }
+    let frame = (VAD_FRAME_MS * sr / 1000).max(1);
+    let mut pieces = Vec::new();
+    let mut start = 0usize;
+    while audio.len() - start > max {
+        let lo = start + 18 * sr;
+        let hi = (start + max).min(audio.len());
+        let mut best = start + 25 * sr;
+        let mut best_rms = f32::INFINITY;
+        let mut s = lo;
+        while s + frame <= hi {
+            let rms = frame_rms(&audio[s..s + frame]);
+            if rms < best_rms {
+                best_rms = rms;
+                best = s;
+            }
+            s += frame;
+        }
+        pieces.push((start, best));
+        start = best;
+    }
+    pieces.push((start, audio.len()));
+    pieces
+}
+
 /// Whether the audio contains any speech above the silence floor.
 pub fn has_speech(audio: &[f32], sample_rate: u32) -> bool {
     let sr = sample_rate as usize;

@@ -126,11 +126,48 @@ fn play_sound(sound_type: &str) {
 /// `transcript-partial` events so the UI can show live captions. Exactly one
 /// of these runs at a time (whisper-rs is not safe for concurrent `full()`),
 /// and stop_recording joins it before transcribing the final tail.
+/// `transcribe-status` payload: whether inference is running right now and
+/// how many seconds of captured audio are still waiting for it.
+fn emit_status(app: &AppHandle, transcribing: bool, backlog_secs: f32) {
+    let _ = app.emit(
+        "transcribe-status",
+        serde_json::json!({
+            "transcribing": transcribing,
+            "backlog_secs": backlog_secs.max(0.0),
+        }),
+    );
+}
+
+/// Emit the mic level (RMS of the last ~100 ms) every 50 ms while recording,
+/// on its own thread so the meter keeps moving while the streaming worker is
+/// busy inside whisper.
+fn spawn_level_meter(app: AppHandle, audio_buf: Arc<SharedAudioBuffer>) {
+    std::thread::spawn(move || {
+        while *audio_buf.is_recording.lock() {
+            let source_rate = *audio_buf.source_sample_rate.lock();
+            let rms = {
+                let samples = audio_buf.samples.lock();
+                let n = samples.len();
+                let win = (source_rate as usize / 10).max(1);
+                if n == 0 {
+                    0.0
+                } else {
+                    let s = &samples[n.saturating_sub(win)..];
+                    (s.iter().map(|x| x * x).sum::<f32>() / s.len().max(1) as f32).sqrt()
+                }
+            };
+            let _ = app.emit("audio-level", rms);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    });
+}
+
 fn spawn_streaming_worker(
     app: AppHandle,
     audio_buf: Arc<SharedAudioBuffer>,
     model_path: PathBuf,
     language_setting: String,
+    use_gpu: bool,
 ) -> JoinHandle<WorkerOutcome> {
     std::thread::spawn(move || {
         let mut outcome = WorkerOutcome::default();
@@ -139,7 +176,8 @@ fn spawn_streaming_worker(
         if !model_path.exists() {
             return outcome;
         }
-        let mut session = match transcribe::Session::new(&model_path, &language_setting) {
+        let mut session = match transcribe::Session::new(&model_path, &language_setting, use_gpu)
+        {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Failed to start transcription session: {}", e);
@@ -159,23 +197,11 @@ fn spawn_streaming_worker(
         let mut announced: Option<String> = None;
         // Language of the last decoded segment, for recordings too short to lock.
         let mut last_language: Option<String> = None;
+        let mut last_status = std::time::Instant::now();
 
         loop {
             let recording = *audio_buf.is_recording.lock();
             let source_rate = *audio_buf.source_sample_rate.lock();
-
-            // Emit a mic level (RMS of the last ~100ms) for the live meter.
-            {
-                let samples = audio_buf.samples.lock();
-                let n = samples.len();
-                let win = (source_rate as usize / 10).max(1);
-                if recording && n > 0 {
-                    let s = &samples[n.saturating_sub(win)..];
-                    let rms =
-                        (s.iter().map(|x| x * x).sum::<f32>() / s.len().max(1) as f32).sqrt();
-                    let _ = app.emit("audio-level", rms);
-                }
-            }
 
             // Clone only the un-committed region (bounded by the VAD hard cap).
             let mut region = {
@@ -188,26 +214,41 @@ fn spawn_streaming_worker(
             };
             crate::audio::normalize_gain(&mut region);
 
+            // Tell the UI how far behind real time we are (throttled while idle).
+            let backlog_secs = region.len() as f32 / source_rate as f32;
+            if last_status.elapsed() >= std::time::Duration::from_millis(250) {
+                emit_status(&app, false, backlog_secs);
+                last_status = std::time::Instant::now();
+            }
+
             if let Some(cut) = crate::audio::find_cut_point(&region, source_rate) {
                 let raw_segment = &region[..cut.index];
                 if crate::audio::has_speech(raw_segment, source_rate) {
                     let ratio = crate::audio::speech_ratio(raw_segment, source_rate);
                     let voiced_secs = ratio * raw_segment.len() as f32 / source_rate as f32;
                     match crate::audio::resample_to_16k(raw_segment, source_rate) {
-                        Ok(seg16k) => match session.transcribe(&seg16k, voiced_secs) {
-                            Ok(out) => {
-                                if !is_hallucination(&out.text, ratio) {
-                                    accumulated =
-                                        join_with_dedup(&accumulated, &out.text, prev_forced);
-                                    let _ = app.emit("transcript-partial", accumulated.clone());
+                        Ok(seg16k) => {
+                            emit_status(&app, true, backlog_secs);
+                            match session.transcribe(&seg16k, voiced_secs) {
+                                Ok(out) => {
+                                    if !is_hallucination(&out.text, ratio) {
+                                        accumulated =
+                                            join_with_dedup(&accumulated, &out.text, prev_forced);
+                                        let _ =
+                                            app.emit("transcript-partial", accumulated.clone());
+                                    }
+                                    if out.language.is_some() {
+                                        last_language = out.language;
+                                    }
+                                    announce_language(&app, &session, &mut announced);
                                 }
-                                if out.language.is_some() {
-                                    last_language = out.language;
-                                }
-                                announce_language(&app, &session, &mut announced);
+                                Err(e) => eprintln!("Streaming transcription failed: {}", e),
                             }
-                            Err(e) => eprintln!("Streaming transcription failed: {}", e),
-                        },
+                            let remaining =
+                                backlog_secs - cut.index as f32 / source_rate as f32;
+                            emit_status(&app, false, remaining);
+                            last_status = std::time::Instant::now();
+                        }
                         Err(e) => eprintln!("Streaming resample failed: {}", e),
                     }
                 }
@@ -328,6 +369,7 @@ pub async fn start_recording(
         return Err(e);
     }
     show_indicator(&app);
+    spawn_level_meter(app.clone(), Arc::clone(&audio_buf));
 
     // Spawn the streaming worker so transcription happens progressively while
     // the user is still speaking (live captions + near-instant finalize).
@@ -337,6 +379,7 @@ pub async fn start_recording(
         Arc::clone(&audio_buf),
         model_path,
         s.language.clone(),
+        s.use_gpu,
     );
     *state.streaming_worker.lock() = Some(worker);
 
@@ -360,7 +403,7 @@ pub async fn stop_recording(
     hide_indicator(&app);
 
     let s = settings::load();
-    let outcome = finish_recording(&state, &audio_buf, &s).await;
+    let outcome = finish_recording(&app, &state, &audio_buf, &s).await;
 
     // Always return to Idle, whatever happened above. A failure in the tail
     // used to leave the app stuck in Processing with the toggle refusing
@@ -408,6 +451,7 @@ pub async fn stop_recording(
 /// streaming worker, transcribe the remaining tail, heal, and save. Returns
 /// `Ok(None)` when no speech was found. The caller owns the state machine.
 async fn finish_recording(
+    app: &AppHandle,
     state: &AppState,
     audio_buf: &Arc<SharedAudioBuffer>,
     s: &AppSettings,
@@ -455,28 +499,41 @@ async fn finish_recording(
         ));
     }
 
-    // Transcribe only the small remaining tail (reusing the worker's session
-    // so the locked language carries over), then assemble.
+    // Transcribe the remaining tail (reusing the worker's session so the
+    // locked language carries over). A long tail means inference fell behind
+    // real time; it is split into ≤28 s pieces at quiet frames and shown
+    // progressively with a "N s left" countdown.
     crate::audio::normalize_gain(&mut tail_audio);
-    let tail_has_speech = crate::audio::has_speech(&tail_audio, 16000);
-    let ratio = if tail_has_speech {
-        crate::audio::speech_ratio(&tail_audio, 16000)
-    } else {
-        0.0
-    };
-    let voiced_secs = ratio * tail_audio.len() as f32 / 16000.0;
+    let tail_secs = tail_audio.len() as f32 / 16000.0;
+    emit_status(app, tail_secs > 0.0, tail_secs);
     let language_setting = s.language.clone();
+    let use_gpu = s.use_gpu;
+    let app2 = app.clone();
+    let committed = accumulated.clone();
     let (tail_text, language) = tokio::task::spawn_blocking(
         move || -> Result<(String, Option<String>), String> {
             let mut session = match session {
                 Some(sess) => sess,
-                None => transcribe::Session::new(&model_path, &language_setting)?,
+                None => transcribe::Session::new(&model_path, &language_setting, use_gpu)?,
             };
             let mut text = String::new();
-            if tail_has_speech {
-                let out = session.transcribe(&tail_audio, voiced_secs)?;
+            let pieces = crate::audio::split_for_whisper(&tail_audio, 16000);
+            let total = tail_audio.len() as f32;
+            for (i, (start, end)) in pieces.iter().enumerate() {
+                let piece = &tail_audio[*start..*end];
+                if !crate::audio::has_speech(piece, 16000) {
+                    continue;
+                }
+                let ratio = crate::audio::speech_ratio(piece, 16000);
+                let voiced_secs = ratio * piece.len() as f32 / 16000.0;
+                let out = session.transcribe(piece, voiced_secs)?;
                 if !is_hallucination(&out.text, ratio) {
-                    text = out.text;
+                    text = join_with_dedup(&text, &out.text, false);
+                }
+                if i + 1 < pieces.len() {
+                    let shown = join_with_dedup(&committed, &text, false);
+                    let _ = app2.emit("transcript-partial", shown);
+                    emit_status(&app2, true, (total - *end as f32) / 16000.0);
                 }
             }
             let language = session
@@ -489,6 +546,7 @@ async fn finish_recording(
     .await
     .map_err(|e| terr("internal", format!("Task join error: {}", e)))?
     .map_err(|e| terr("transcribe", e))?;
+    emit_status(app, false, 0.0);
 
     let raw_transcript = join_with_dedup(&accumulated, &tail_text, prev_forced);
     if raw_transcript.trim().is_empty() {
@@ -598,14 +656,65 @@ pub async fn download_model(app: AppHandle, model_name: String) -> Result<String
 /// For large models (e.g. distil-large-v3.5 at 1.5 GB) this can take
 /// 5-10 seconds, so it runs on a blocking thread to avoid stalling the UI.
 #[tauri::command]
-pub async fn preload_model(filename: String) -> Result<(), String> {
+pub async fn preload_model(app: AppHandle, filename: String) -> Result<(), String> {
     let path = model_manager::model_path(&filename);
-    if !path.exists() {
-        return Err(format!("Model not downloaded: {}", filename));
-    }
-    tokio::task::spawn_blocking(move || transcribe::preload(&path))
+    let use_gpu = settings::load().use_gpu;
+    let _ = app.emit(
+        "model-status",
+        transcribe::ModelStatus {
+            state: "loading",
+            model: filename.clone(),
+            gpu: false,
+            message: None,
+        },
+    );
+    let result = tokio::task::spawn_blocking(move || transcribe::preload(&path, use_gpu))
         .await
-        .map_err(|e| format!("Task join error: {}", e))?
+        .map_err(|e| format!("Task join error: {}", e))?;
+    let _ = app.emit("model-status", transcribe::model_status());
+    result
+}
+
+/// Warm the model cache off the main thread at startup, reporting progress
+/// as `model-status` events.
+pub fn preload_in_background(app: AppHandle) {
+    std::thread::spawn(move || {
+        let s = settings::load();
+        let path = model_manager::model_path(&s.whisper_model);
+        let _ = app.emit(
+            "model-status",
+            transcribe::ModelStatus {
+                state: "loading",
+                model: s.whisper_model.clone(),
+                gpu: false,
+                message: None,
+            },
+        );
+        if let Err(e) = transcribe::preload(&path, s.use_gpu) {
+            eprintln!("Model preload failed: {}", e);
+        }
+        let _ = app.emit("model-status", transcribe::model_status());
+    });
+}
+
+#[tauri::command]
+pub fn get_model_status() -> transcribe::ModelStatus {
+    transcribe::model_status()
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct BuildInfo {
+    /// "vulkan" | "metal" | "none"
+    pub gpu_backend: &'static str,
+    pub version: &'static str,
+}
+
+#[tauri::command]
+pub fn get_build_info() -> BuildInfo {
+    BuildInfo {
+        gpu_backend: transcribe::GPU_BACKEND,
+        version: env!("CARGO_PKG_VERSION"),
+    }
 }
 
 // History commands

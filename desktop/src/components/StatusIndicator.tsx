@@ -1,20 +1,31 @@
+import type { ModelStatus } from "../hooks/useModelStatus";
+
 interface StatusIndicatorProps {
   state: "idle" | "recording" | "processing";
   onToggle: () => void;
+  /** Backend model load state; recording waits for "ready". */
+  modelStatus?: ModelStatus | null;
+  /** Seconds of audio still to transcribe while processing. */
+  backlogSecs?: number;
 }
 
 export default function StatusIndicator({
   state,
   onToggle,
+  modelStatus = null,
+  backlogSecs = 0,
 }: StatusIndicatorProps) {
   const isRecording = state === "recording";
   const isProcessing = state === "processing";
+  const modelLoading = modelStatus?.state === "loading";
+  const modelProblem = modelStatus?.state === "error" || modelStatus?.state === "missing";
+  const behind = Math.round(backlogSecs);
 
   return (
     <div className="flex flex-col items-center gap-4">
       <button
         onClick={onToggle}
-        disabled={isProcessing}
+        disabled={isProcessing || (modelLoading && !isRecording)}
         className={`
           w-24 h-24 rounded-full flex items-center justify-center
           transition-all duration-200 ease-in-out
@@ -23,7 +34,9 @@ export default function StatusIndicator({
               ? "bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/30 animate-pulse"
               : isProcessing
                 ? "bg-yellow-500 cursor-not-allowed opacity-70"
-                : "bg-blue-500 hover:bg-blue-600 shadow-lg shadow-blue-500/30 hover:scale-105"
+                : modelLoading
+                  ? "bg-neutral-700 cursor-not-allowed opacity-60"
+                  : "bg-blue-500 hover:bg-blue-600 shadow-lg shadow-blue-500/30 hover:scale-105"
           }
         `}
       >
@@ -71,9 +84,23 @@ export default function StatusIndicator({
         {isRecording
           ? "Recording... Click or press shortcut to stop"
           : isProcessing
-            ? "Processing audio..."
-            : "Click or press Ctrl+Shift+Space to record"}
+            ? behind > 1
+              ? `Finishing up… ${behind} s left`
+              : "Processing audio..."
+            : modelLoading
+              ? "Loading speech model…"
+              : "Click or press Ctrl+Shift+Space to record"}
       </p>
+      {modelProblem && !isRecording && !isProcessing && (
+        <p className="text-xs text-amber-400 text-center">
+          {modelStatus?.state === "missing"
+            ? "Speech model not downloaded — pick one in Settings."
+            : `Model failed to load: ${modelStatus?.message ?? "unknown error"}`}
+        </p>
+      )}
+      {modelStatus?.state === "ready" && modelStatus.gpu && state === "idle" && (
+        <p className="text-[10px] text-neutral-600">GPU acceleration active</p>
+      )}
     </div>
   );
 }
