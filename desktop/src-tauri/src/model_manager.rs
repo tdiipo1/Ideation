@@ -93,6 +93,39 @@ pub fn available_models() -> Vec<ModelInfo> {
     ]
 }
 
+pub const VAD_FILENAME: &str = "ggml-silero-v5.1.2.bin";
+
+/// whisper.cpp's Silero VAD model (~1 MB), downloaded at startup. Not part of
+/// `available_models()`: it isn't user-selectable.
+pub fn vad_model() -> ModelInfo {
+    ModelInfo {
+        name: "silero-vad".to_string(),
+        english_only: false,
+        label: "Silero VAD".to_string(),
+        description: "Voice activity detection".to_string(),
+        filename: VAD_FILENAME.to_string(),
+        url: "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"
+            .to_string(),
+        sha256: "".to_string(),
+        size_mb: 1,
+    }
+}
+
+pub fn vad_model_path() -> PathBuf {
+    model_path(VAD_FILENAME)
+}
+
+/// Download the VAD model if it isn't on disk yet. Failures are logged; the
+/// app falls back to the energy detector until the next launch.
+pub async fn ensure_vad_model(app: &AppHandle) {
+    if vad_model_path().exists() {
+        return;
+    }
+    if let Err(e) = download_model(app, &vad_model()).await {
+        eprintln!("VAD model download failed: {}", e);
+    }
+}
+
 pub fn models_dir() -> PathBuf {
     let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("com.ideation.desktop").join("models")

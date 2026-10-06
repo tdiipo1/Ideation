@@ -115,6 +115,9 @@ export function useRecording(
         const ratio = speechRatio(segment);
         const out = await onTranscribeSegment(segment, {
           voicedSecs: (ratio * segment.length) / 16000,
+          // Context for the decoder; skipped on mostly-silent clips (Whisper
+          // echoes prompts over silence).
+          prevText: ratio >= 0.25 ? committedRef.current.slice(-200) : "",
           onPartial: (t) => {
             if (mountedRef.current) setPendingText(t);
           },
@@ -183,6 +186,7 @@ export function useRecording(
           const ratio = speechRatio(tail);
           const out = await onTranscribe(tail, {
             voicedSecs: (ratio * tail.length) / 16000,
+            prevText: ratio >= 0.25 ? committedRef.current.slice(-200) : "",
             onPartial: (t) => {
               if (mountedRef.current) setPendingText(t);
             },

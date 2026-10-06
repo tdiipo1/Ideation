@@ -25,6 +25,8 @@ export interface TranscribeOpts {
   voicedSecs?: number;
   /** Receives the growing text of this clip while it is being decoded. */
   onPartial?: (text: string) => void;
+  /** Text transcribed just before this clip, for decoder context. */
+  prevText?: string;
 }
 
 export type Transcriber = (audio: Float32Array, opts?: TranscribeOpts) => Promise<TranscribeOutput>;
@@ -192,6 +194,7 @@ async function postTranscribe(
           requestId,
           voicedSecs: opts.voicedSecs ?? 0,
           wantPartial: !!opts.onPartial,
+          prevText: opts.prevText ?? "",
         },
       },
       [buf.buffer],

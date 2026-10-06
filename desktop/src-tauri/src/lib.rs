@@ -55,6 +55,13 @@ pub fn run() {
             // load cost (and the UI can show "Loading model…" meanwhile).
             commands::preload_in_background(app.handle().clone());
 
+            // Fetch the ~1 MB Silero VAD model used to find pauses between
+            // phrases (the energy detector is the fallback until it's there).
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                model_manager::ensure_vad_model(&handle).await;
+            });
+
             // Build system tray menu
             let quit = MenuItem::with_id(app, "quit", "Quit Ideation", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;

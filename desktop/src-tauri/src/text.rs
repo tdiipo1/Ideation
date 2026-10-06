@@ -151,6 +151,20 @@ pub fn join_with_dedup(committed: &str, next: &str, aggressive: bool) -> String 
     }
 }
 
+/// The last `max_chars` characters of `s`, preferring to start at a word
+/// boundary. Used as the decoder prompt for the next segment.
+pub fn tail_chars(s: &str, max_chars: usize) -> String {
+    let total = s.chars().count();
+    if total <= max_chars {
+        return s.to_string();
+    }
+    let tail: String = s.chars().skip(total - max_chars).collect();
+    match tail.find(char::is_whitespace) {
+        Some(i) if i + 1 < tail.len() => tail[i + 1..].to_string(),
+        _ => tail,
+    }
+}
+
 fn norm_text(s: &str) -> String {
     let t: String = s
         .to_lowercase()

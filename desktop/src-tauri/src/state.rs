@@ -21,6 +21,8 @@ pub struct WorkerOutcome {
     pub prev_forced: bool,
     /// The inference session (state + locked language), reused for the tail.
     pub session: Option<crate::transcribe::Session>,
+    /// The voice-activity detector the worker used, reused for the tail.
+    pub vad: Option<crate::audio::Vad>,
     /// Language the session locked on, if any.
     pub language: Option<String>,
 }

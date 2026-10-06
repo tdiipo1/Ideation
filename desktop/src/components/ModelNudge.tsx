@@ -3,9 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { languageName, uiLanguage } from "../lib/languages";
 
-// One-time banner for users whose system language isn't English but whose
-// selected model is English-only (the bundled default). Offers the
-// multilingual downloads instead of switching silently.
+// One-time banner suggesting a better-fitting speech model:
+// - system language isn't English but the selected model is English-only
+//   (the bundled default) → offer the multilingual downloads;
+// - English user on the bundled base.en with a capable machine → offer
+//   Small (English), which is noticeably more accurate.
+// Never switches silently: the user picks, or dismisses for good.
 
 interface AppSettings {
   whisper_model: string;
@@ -21,7 +24,9 @@ interface ModelInfo {
   english_only: boolean;
 }
 
-export default function MultilingualNudge() {
+const CAPABLE_LOGICAL_CORES = 8;
+
+export default function ModelNudge() {
   const ui = uiLanguage();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -31,7 +36,6 @@ export default function MultilingualNudge() {
   const [hidden, setHidden] = useState(false);
 
   useEffect(() => {
-    if (ui === "en") return;
     Promise.all([
       invoke<AppSettings>("get_settings"),
       invoke<ModelInfo[]>("get_available_models"),
@@ -46,13 +50,36 @@ export default function MultilingualNudge() {
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [ui]);
+  }, []);
 
-  if (ui === "en" || hidden || !settings || settings.model_nudge_dismissed) return null;
+  if (hidden || !settings || settings.model_nudge_dismissed) return null;
   const current = models.find((m) => m.filename === settings.whisper_model);
-  if (!current || !current.english_only) return null;
-  // Offer the two sensible choices: the small download and the best model.
-  const options = models.filter((m) => m.name === "base" || m.name === "large-v3-turbo");
+  if (!current) return null;
+
+  let message: React.ReactNode = null;
+  let options: ModelInfo[] = [];
+  if (ui !== "en" && current.english_only) {
+    message = (
+      <>
+        Your system language is <b>{languageName(ui)}</b>, but the current speech model only
+        understands English. Download a multilingual model?
+      </>
+    );
+    options = models.filter((m) => m.name === "base" || m.name === "large-v3-turbo");
+  } else if (
+    ui === "en" &&
+    current.name === "base.en" &&
+    (navigator.hardwareConcurrency || 0) >= CAPABLE_LOGICAL_CORES
+  ) {
+    message = (
+      <>
+        This machine can comfortably run the <b>Small (English)</b> model, which is noticeably
+        more accurate than Base. Download it?
+      </>
+    );
+    options = models.filter((m) => m.name === "small.en");
+  }
+  if (!message || options.length === 0) return null;
 
   async function choose(model: ModelInfo) {
     if (!settings) return;
@@ -82,10 +109,7 @@ export default function MultilingualNudge() {
 
   return (
     <div className="bg-neutral-900 rounded-lg p-4 border border-blue-900/60 flex flex-col gap-2">
-      <p className="text-sm text-neutral-300">
-        Your system language is <b>{languageName(ui)}</b>, but the current speech model only
-        understands English. Download a multilingual model?
-      </p>
+      <p className="text-sm text-neutral-300">{message}</p>
       {busy ? (
         <div>
           <div className="w-full h-2 bg-neutral-700 rounded-full overflow-hidden">
@@ -108,7 +132,7 @@ export default function MultilingualNudge() {
             onClick={dismiss}
             className="text-xs px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-md transition-colors"
           >
-            Keep English
+            Not now
           </button>
         </div>
       )}

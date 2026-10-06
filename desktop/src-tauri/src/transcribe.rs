@@ -92,6 +92,12 @@ fn get_num_threads() -> i32 {
 /// whatever was detected, but don't commit the session to it.
 pub const LOCK_MIN_VOICED_SECS: f32 = 2.0;
 
+/// Beam width for the small/base/tiny models. whisper-cli's default is 5;
+/// greedy decoding (what this app used before) measurably loses accuracy on
+/// exactly the "which of these similar words was it" cases. The large models
+/// keep greedy: their decoder is where the time goes.
+const BEAM_SIZE: i32 = 5;
+
 fn load_ctx(model_path: &Path, gpu: bool) -> Result<WhisperContext, String> {
     let mut params = WhisperContextParameters::default();
     params.use_gpu(gpu);
@@ -173,9 +179,9 @@ pub struct Session {
     setting: String,
     /// Language committed for the rest of the recording.
     locked: Option<String>,
-    /// Text committed so far; used as the decoder prompt for context.
-    #[allow(dead_code)] // wired up by the cross-segment context pass
-    pub prev_text: String,
+    /// Large models decode greedily (their decoder dominates the time);
+    /// everything else uses beam search.
+    heavy: bool,
 }
 
 impl Session {
@@ -189,12 +195,16 @@ impl Session {
         } else {
             "auto".to_string()
         };
+        let heavy = model_path
+            .file_name()
+            .map(|n| n.to_string_lossy().contains("large"))
+            .unwrap_or(false);
         Ok(Self {
             ctx,
             state,
             setting,
             locked: None,
-            prev_text: String::new(),
+            heavy,
         })
     }
 
@@ -211,9 +221,20 @@ impl Session {
         self.locked.as_deref()
     }
 
-    /// Transcribe a 16 kHz mono clip. `voiced_secs` is how much of it the
-    /// VAD considered speech; it gates the auto-detect lock.
-    pub fn transcribe(&mut self, audio: &[f32], voiced_secs: f32) -> Result<TranscribeOutput, String> {
+    /// Transcribe a 16 kHz mono clip.
+    /// - `voiced_secs`: how much of the clip the VAD considered speech; gates
+    ///   the auto-detect lock.
+    /// - `prompt`: text already transcribed before this clip. Whisper
+    ///   conditions on it, which keeps names, casing and punctuation
+    ///   consistent across streaming segments and helps disambiguate words
+    ///   at the start of a clip. Pass `None` for mostly-silent clips: Whisper
+    ///   tends to echo the prompt over silence.
+    pub fn transcribe(
+        &mut self,
+        audio: &[f32],
+        voiced_secs: f32,
+        prompt: Option<&str>,
+    ) -> Result<TranscribeOutput, String> {
         // Decide the language for this call. whisper.cpp's default is "en",
         // so multilingual models must be told "auto" explicitly — and "auto"
         // costs an extra encoder pass, which is why we lock as soon as a
@@ -226,7 +247,15 @@ impl Session {
             (None, code, true) => code.to_string(),
         };
 
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
+        let strategy = if self.heavy {
+            SamplingStrategy::Greedy { best_of: 5 }
+        } else {
+            SamplingStrategy::BeamSearch {
+                beam_size: BEAM_SIZE,
+                patience: -1.0,
+            }
+        };
+        let mut params = FullParams::new(strategy);
         params.set_language(Some(&lang));
         params.set_print_special(false);
         params.set_print_progress(false);
@@ -234,7 +263,20 @@ impl Session {
         params.set_print_timestamps(false);
         params.set_no_timestamps(true);
         params.set_suppress_blank(true);
+        // Drop the non-speech tokens (♪, [laughs] …) at the decoder instead
+        // of regex-ing them out afterwards.
+        params.set_suppress_nst(true);
+        // Temperature fallback (whisper.cpp defaults, stated explicitly):
+        // retry at higher temperatures when the decode looks degenerate.
+        params.set_temperature(0.0);
+        params.set_temperature_inc(0.2);
+        params.set_entropy_thold(2.4);
+        params.set_logprob_thold(-1.0);
+        params.set_no_speech_thold(0.6);
         params.set_n_threads(get_num_threads());
+        if let Some(p) = prompt.map(str::trim).filter(|p| !p.is_empty()) {
+            params.set_initial_prompt(p);
+        }
 
         self.state
             .full(params, audio)
@@ -268,5 +310,68 @@ impl Session {
             text: text.trim().to_string(),
             language: detected,
         })
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    //! Manual benchmark: transcribe a WAV file with a given model and print
+    //! the text, detected language and timing. Not run by default.
+    //!
+    //!   IDEATION_BENCH_WAV=test-audio/es-pauses.wav \
+    //!   IDEATION_BENCH_MODEL=%LOCALAPPDATA%/com.ideation.desktop/models/ggml-base.bin \
+    //!   IDEATION_BENCH_LANG=auto \
+    //!   cargo test --release --lib bench -- --ignored --nocapture
+    use super::*;
+
+    fn read_wav_16k(path: &str) -> Vec<f32> {
+        let mut reader = hound::WavReader::open(path).expect("open wav");
+        let spec = reader.spec();
+        let channels = spec.channels as usize;
+        let samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
+            hound::SampleFormat::Int => {
+                let max = (1i64 << (spec.bits_per_sample - 1)) as f32;
+                reader.samples::<i32>().map(|s| s.unwrap() as f32 / max).collect()
+            }
+        };
+        let mono: Vec<f32> = samples
+            .chunks(channels)
+            .map(|f| f.iter().sum::<f32>() / f.len() as f32)
+            .collect();
+        crate::audio::resample(&mono, spec.sample_rate, 16000).expect("resample")
+    }
+
+    #[test]
+    #[ignore]
+    fn transcribe_wav() {
+        let wav = std::env::var("IDEATION_BENCH_WAV").expect("IDEATION_BENCH_WAV");
+        let model = std::env::var("IDEATION_BENCH_MODEL").expect("IDEATION_BENCH_MODEL");
+        let lang = std::env::var("IDEATION_BENCH_LANG").unwrap_or_else(|_| "auto".into());
+        let prompt = std::env::var("IDEATION_BENCH_PROMPT").ok();
+        let audio = read_wav_16k(&wav);
+        let secs = audio.len() as f32 / 16000.0;
+
+        let t0 = std::time::Instant::now();
+        let mut session = Session::new(Path::new(&model), &lang, true).expect("session");
+        let load_ms = t0.elapsed().as_millis();
+
+        let t1 = std::time::Instant::now();
+        let out = session
+            .transcribe(&audio, secs, prompt.as_deref())
+            .expect("transcribe");
+        let ms = t1.elapsed().as_millis();
+        println!(
+            "model={} gpu={} load={}ms audio={:.1}s decode={}ms ({:.2}x realtime) language={:?} threads={}",
+            model,
+            ACTIVE_GPU.load(Ordering::Relaxed),
+            load_ms,
+            secs,
+            ms,
+            ms as f32 / 1000.0 / secs,
+            out.language,
+            get_num_threads()
+        );
+        println!("TEXT: {}", out.text);
     }
 }

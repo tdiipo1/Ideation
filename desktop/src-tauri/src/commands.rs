@@ -1,10 +1,10 @@
-use crate::audio::SharedAudioBuffer;
+use crate::audio::{self, SharedAudioBuffer};
 use crate::healing;
 use crate::history;
 use crate::model_manager;
 use crate::settings::{self, AppSettings};
 use crate::state::{AppState, RecordingState, WorkerOutcome};
-use crate::text::{is_hallucination, join_with_dedup};
+use crate::text::{is_hallucination, join_with_dedup, tail_chars};
 use crate::transcribe;
 use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
 use std::path::PathBuf;
@@ -144,11 +144,10 @@ fn emit_status(app: &AppHandle, transcribing: bool, backlog_secs: f32) {
 fn spawn_level_meter(app: AppHandle, audio_buf: Arc<SharedAudioBuffer>) {
     std::thread::spawn(move || {
         while *audio_buf.is_recording.lock() {
-            let source_rate = *audio_buf.source_sample_rate.lock();
             let rms = {
                 let samples = audio_buf.samples.lock();
                 let n = samples.len();
-                let win = (source_rate as usize / 10).max(1);
+                let win = (audio::SAMPLE_RATE as usize / 10).max(1);
                 if n == 0 {
                     0.0
                 } else {
@@ -190,7 +189,9 @@ fn spawn_streaming_worker(
                 "The selected language needs a multilingual model — transcribing as English.",
             );
         }
+        let mut vad = audio::Vad::load(&model_manager::vad_model_path());
 
+        let sr = audio::SAMPLE_RATE as usize;
         let mut cursor: usize = 0;
         let mut accumulated = String::new();
         let mut prev_forced = false;
@@ -198,10 +199,16 @@ fn spawn_streaming_worker(
         // Language of the last decoded segment, for recordings too short to lock.
         let mut last_language: Option<String> = None;
         let mut last_status = std::time::Instant::now();
+        // Raised when inference runs slower than real time: longer segments
+        // mean fewer full-window encoder passes per second of speech.
+        let mut min_segment_secs = audio::DEFAULT_MIN_SEGMENT_SECS;
+        // Speech regions of the un-committed region. The VAD is re-run only
+        // after >= 0.5 s of new audio (or a cut); it costs real CPU on 20 s.
+        let mut regions: Vec<(usize, usize)> = Vec::new();
+        let mut analyzed_len = 0usize;
 
         loop {
             let recording = *audio_buf.is_recording.lock();
-            let source_rate = *audio_buf.source_sample_rate.lock();
 
             // Clone only the un-committed region (bounded by the VAD hard cap).
             let mut region = {
@@ -212,56 +219,68 @@ fn spawn_streaming_worker(
                     Vec::new()
                 }
             };
-            crate::audio::normalize_gain(&mut region);
+            audio::normalize_gain(&mut region);
 
             // Tell the UI how far behind real time we are (throttled while idle).
-            let backlog_secs = region.len() as f32 / source_rate as f32;
+            let backlog_secs = region.len() as f32 / sr as f32;
             if last_status.elapsed() >= std::time::Duration::from_millis(250) {
                 emit_status(&app, false, backlog_secs);
                 last_status = std::time::Instant::now();
             }
 
-            if let Some(cut) = crate::audio::find_cut_point(&region, source_rate) {
-                let raw_segment = &region[..cut.index];
-                if crate::audio::has_speech(raw_segment, source_rate) {
-                    let ratio = crate::audio::speech_ratio(raw_segment, source_rate);
-                    let voiced_secs = ratio * raw_segment.len() as f32 / source_rate as f32;
-                    match crate::audio::resample_to_16k(raw_segment, source_rate) {
-                        Ok(seg16k) => {
-                            emit_status(&app, true, backlog_secs);
-                            match session.transcribe(&seg16k, voiced_secs) {
-                                Ok(out) => {
-                                    if !is_hallucination(&out.text, ratio) {
-                                        accumulated =
-                                            join_with_dedup(&accumulated, &out.text, prev_forced);
-                                        let _ =
-                                            app.emit("transcript-partial", accumulated.clone());
-                                    }
-                                    if out.language.is_some() {
-                                        last_language = out.language;
-                                    }
-                                    announce_language(&app, &session, &mut announced);
-                                }
-                                Err(e) => eprintln!("Streaming transcription failed: {}", e),
+            if region.len() >= analyzed_len + sr / 2 {
+                regions = vad.speech_regions(&region);
+                analyzed_len = region.len();
+            }
+
+            if let Some(cut) = audio::cut_from_regions(region.len(), &regions, min_segment_secs) {
+                let segment = &region[..cut.index];
+                let seg_regions = audio::clip_regions(&regions, cut.index);
+                if !seg_regions.is_empty() {
+                    let ratio = audio::speech_fraction(segment.len(), &seg_regions);
+                    let voiced_secs = audio::speech_secs(&seg_regions);
+                    // Context for the decoder: what was said just before.
+                    // Skipped on mostly-silent clips (Whisper echoes prompts
+                    // over silence).
+                    let prompt = if ratio >= 0.25 && !accumulated.is_empty() {
+                        Some(tail_chars(&accumulated, 200))
+                    } else {
+                        None
+                    };
+                    emit_status(&app, true, backlog_secs);
+                    let started = std::time::Instant::now();
+                    match session.transcribe(segment, voiced_secs, prompt.as_deref()) {
+                        Ok(out) => {
+                            if !is_hallucination(&out.text, ratio) {
+                                accumulated = join_with_dedup(&accumulated, &out.text, prev_forced);
+                                let _ = app.emit("transcript-partial", accumulated.clone());
                             }
-                            let remaining =
-                                backlog_secs - cut.index as f32 / source_rate as f32;
-                            emit_status(&app, false, remaining);
-                            last_status = std::time::Instant::now();
+                            if out.language.is_some() {
+                                last_language = out.language;
+                            }
+                            announce_language(&app, &session, &mut announced);
                         }
-                        Err(e) => eprintln!("Streaming resample failed: {}", e),
+                        Err(e) => eprintln!("Streaming transcription failed: {}", e),
                     }
+                    let inference_secs = started.elapsed().as_secs_f32();
+                    min_segment_secs = (inference_secs * 1.5)
+                        .clamp(audio::DEFAULT_MIN_SEGMENT_SECS, audio::MAX_MIN_SEGMENT_SECS);
+                    let remaining = backlog_secs - cut.index as f32 / sr as f32;
+                    emit_status(&app, false, remaining);
+                    last_status = std::time::Instant::now();
                 }
                 // On a forced cut, back the cursor up ~0.75s so the next
                 // segment re-hears the split word; join_with_dedup removes
                 // the repeated words at the seam.
-                let overlap = (source_rate as usize * 3) / 4;
+                let overlap = sr * 3 / 4;
                 cursor += if cut.forced {
                     cut.index.saturating_sub(overlap).max(1)
                 } else {
                     cut.index
                 };
                 prev_forced = cut.forced;
+                regions.clear();
+                analyzed_len = 0;
                 // Loop again immediately to drain any backlog before sleeping.
                 continue;
             }
@@ -297,6 +316,7 @@ fn spawn_streaming_worker(
             .map(|s| s.to_string())
             .or(last_language);
         outcome.session = Some(session);
+        outcome.vad = Some(vad);
         outcome
     })
 }
@@ -479,6 +499,7 @@ async fn finish_recording(
         cursor,
         prev_forced,
         session,
+        vad,
         language: worker_language,
     } = outcome;
 
@@ -488,8 +509,8 @@ async fn finish_recording(
 
     // Let the cpal thread flush its final buffer, then drain the tail.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    let (mut tail_audio, duration_secs) = crate::audio::take_tail_16k(audio_buf, cursor)
-        .map_err(|e| terr("audio", e))?;
+    let (mut tail_audio, duration_secs) =
+        audio::take_tail(audio_buf, cursor).map_err(|e| terr("audio", e))?;
 
     let model_path = model_manager::model_path(&s.whisper_model);
     if !model_path.exists() {
@@ -503,8 +524,8 @@ async fn finish_recording(
     // locked language carries over). A long tail means inference fell behind
     // real time; it is split into ≤28 s pieces at quiet frames and shown
     // progressively with a "N s left" countdown.
-    crate::audio::normalize_gain(&mut tail_audio);
-    let tail_secs = tail_audio.len() as f32 / 16000.0;
+    audio::normalize_gain(&mut tail_audio);
+    let tail_secs = tail_audio.len() as f32 / audio::SAMPLE_RATE as f32;
     emit_status(app, tail_secs > 0.0, tail_secs);
     let language_setting = s.language.clone();
     let use_gpu = s.use_gpu;
@@ -516,24 +537,32 @@ async fn finish_recording(
                 Some(sess) => sess,
                 None => transcribe::Session::new(&model_path, &language_setting, use_gpu)?,
             };
+            let mut vad = vad.unwrap_or_else(|| audio::Vad::load(&model_manager::vad_model_path()));
             let mut text = String::new();
-            let pieces = crate::audio::split_for_whisper(&tail_audio, 16000);
+            let pieces = audio::split_for_whisper(&tail_audio, audio::SAMPLE_RATE);
             let total = tail_audio.len() as f32;
             for (i, (start, end)) in pieces.iter().enumerate() {
                 let piece = &tail_audio[*start..*end];
-                if !crate::audio::has_speech(piece, 16000) {
+                let regions = vad.speech_regions(piece);
+                if regions.is_empty() {
                     continue;
                 }
-                let ratio = crate::audio::speech_ratio(piece, 16000);
-                let voiced_secs = ratio * piece.len() as f32 / 16000.0;
-                let out = session.transcribe(piece, voiced_secs)?;
+                let ratio = audio::speech_fraction(piece.len(), &regions);
+                let voiced_secs = audio::speech_secs(&regions);
+                let context = join_with_dedup(&committed, &text, false);
+                let prompt = if ratio >= 0.25 && !context.is_empty() {
+                    Some(tail_chars(&context, 200))
+                } else {
+                    None
+                };
+                let out = session.transcribe(piece, voiced_secs, prompt.as_deref())?;
                 if !is_hallucination(&out.text, ratio) {
                     text = join_with_dedup(&text, &out.text, false);
                 }
                 if i + 1 < pieces.len() {
                     let shown = join_with_dedup(&committed, &text, false);
                     let _ = app2.emit("transcript-partial", shown);
-                    emit_status(&app2, true, (total - *end as f32) / 16000.0);
+                    emit_status(&app2, true, (total - *end as f32) / audio::SAMPLE_RATE as f32);
                 }
             }
             let language = session

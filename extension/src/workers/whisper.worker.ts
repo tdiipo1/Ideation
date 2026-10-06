@@ -64,6 +64,15 @@ let announcedLanguage: string | null = null;
 
 /** Voiced seconds a segment needs before its detected language is locked. */
 const LOCK_MIN_VOICED_SECS = 2;
+/**
+ * Condition the decoder on the previous text (Whisper's <|startofprev|>
+ * prompt). Keeps names, casing and punctuation consistent across streaming
+ * segments — but small models can fall into repetition loops when prompted,
+ * so this stays off until it has been validated on the bench
+ * (extension/scripts/bench.mjs --prompt) for tiny/base.
+ */
+const CONTEXT_PROMPT_ENABLED = false;
+const MAX_PROMPT_TOKENS = 64;
 /** Clips up to this length go through a single encoder pass. */
 const MAX_DIRECT_SECS = 28;
 const SAMPLE_RATE = 16000;
@@ -215,13 +224,20 @@ async function transcribeDirect(
   audio: Float32Array,
   language: string | null,
   onPartial?: (text: string) => void,
+  prevText?: string,
 ): Promise<string> {
   if (!transcriber) throw new Error("Model not loaded");
   const { model, processor, tokenizer } = transcriber;
   const g = genConfig();
   const { input_features } = await processor(audio);
 
-  const init: number[] = [g.decoder_start_token_id];
+  const init: number[] = [];
+  if (CONTEXT_PROMPT_ENABLED && prevText && g.prev_sot_token_id != null) {
+    // Mirrors HF's prompt_ids: <|startofprev|> + tokens(" " + text).
+    const ids: number[] = tokenizer.encode(" " + prevText.trim(), { add_special_tokens: false });
+    init.push(g.prev_sot_token_id, ...ids.slice(-MAX_PROMPT_TOKENS));
+  }
+  init.push(g.decoder_start_token_id);
   if (isMultilingual()) {
     const langId = g.lang_to_id[`<|${language ?? "en"}|>`] ?? g.lang_to_id["<|en|>"];
     init.push(langId, g.task_to_id?.transcribe);
@@ -274,10 +290,11 @@ async function runInference(
   audio: Float32Array,
   language: string | null,
   onPartial?: (text: string) => void,
+  prevText?: string,
 ): Promise<string> {
   if (audio.length / SAMPLE_RATE <= MAX_DIRECT_SECS) {
     try {
-      return await transcribeDirect(audio, language, onPartial);
+      return await transcribeDirect(audio, language, onPartial, prevText);
     } catch (err) {
       log(`Direct generate failed, using pipeline: ${String(err)}`);
     }
@@ -290,15 +307,16 @@ async function runInferenceWithRetry(
   audio: Float32Array,
   language: string | null,
   onPartial?: (text: string) => void,
+  prevText?: string,
 ): Promise<string> {
   try {
-    return await runInference(audio, language, onPartial);
+    return await runInference(audio, language, onPartial, prevText);
   } catch (err) {
     log(`Inference failed, rebuilding pipeline: ${String(err)}`);
     warmedUp = false;
     if (!currentModel) throw err;
     await buildPipeline(currentModel);
-    return await runInference(audio, language, onPartial);
+    return await runInference(audio, language, onPartial, prevText);
   }
 }
 
@@ -365,7 +383,7 @@ self.onmessage = async (event: MessageEvent) => {
 
     case "transcribe":
     case "transcribe-segment": {
-      const { audio, requestId, voicedSecs = 0, wantPartial = false } = payload;
+      const { audio, requestId, voicedSecs = 0, wantPartial = false, prevText = "" } = payload;
       if (!transcriber) {
         post("error", { requestId, message: "Model not loaded" });
         return;
@@ -388,7 +406,12 @@ self.onmessage = async (event: MessageEvent) => {
         const onPartial = wantPartial
           ? (text: string) => post("partial", { requestId, text })
           : undefined;
-        const text = await runInferenceWithRetry(audio as Float32Array, language, onPartial);
+        const text = await runInferenceWithRetry(
+          audio as Float32Array,
+          language,
+          onPartial,
+          prevText,
+        );
         return { text, language: language ?? effectiveLanguage() };
       })
         .then((r) => post("result", { requestId, text: r.text, language: r.language }))

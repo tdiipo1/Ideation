@@ -40,3 +40,6 @@ desktop/src-tauri/gen/
 
 # Claude settings
 .claude/
+
+# Transformers.js model cache used by extension/scripts/bench.mjs
+extension/.cache/

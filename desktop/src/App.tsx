@@ -5,7 +5,7 @@ import TranscriptView from "./components/TranscriptView";
 import ModelDownloader from "./components/ModelDownloader";
 import HistoryView from "./components/HistoryView";
 import Settings from "./components/Settings";
-import MultilingualNudge from "./components/MultilingualNudge";
+import ModelNudge from "./components/ModelNudge";
 import { useRecording } from "./hooks/useRecording";
 import { useModelStatus } from "./hooks/useModelStatus";
 
@@ -68,7 +68,7 @@ function App() {
         {tab === "record" && (
           <>
             <ModelDownloader />
-            <MultilingualNudge />
+            <ModelNudge />
             <StatusIndicator
               state={state}
               onToggle={toggle}
