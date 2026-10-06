@@ -46,4 +46,3 @@ export const DEFAULT_SETTINGS: ExtSettings = {
 // Set via VITE_SHARED_GEMINI_KEY env var at build time
 export const SHARED_GEMINI_KEY = import.meta.env.VITE_SHARED_GEMINI_KEY || "";
 
-declare module "*.css" {}

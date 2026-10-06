@@ -54,11 +54,21 @@ export function useRecording() {
       setNotice("No speech detected");
     });
 
+    // Any failure between stop and transcript (mic died, model missing,
+    // inference error). The backend has already returned to idle.
+    const unlistenError = listen<{ code: string; message: string }>(
+      "transcribe-error",
+      (event) => {
+        setNotice(event.payload.message);
+      },
+    );
+
     return () => {
       unlistenState.then((fn) => fn());
       unlistenTranscript.then((fn) => fn());
       unlistenLevel.then((fn) => fn());
       unlistenNoSpeech.then((fn) => fn());
+      unlistenError.then((fn) => fn());
     };
   }, []);
 

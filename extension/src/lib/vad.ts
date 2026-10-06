@@ -11,12 +11,28 @@ const FRAME = 480; // 30ms frames at 16kHz
 const MIN_SEGMENT_SAMPLES = 3 * SAMPLE_RATE; // don't commit segments shorter than this
 const HARD_CAP_SAMPLES = 20 * SAMPLE_RATE; // force a cut beyond this (Whisper's window is 30s)
 const SILENCE_SAMPLES = Math.round(0.4 * SAMPLE_RATE); // 400ms of quiet = a pause
-const ABS_FLOOR = 0.008; // absolute RMS floor so true silence always counts as silent
+const ABS_FLOOR = 0.004; // absolute RMS floor so true silence always counts as silent
 
 // When a cut is forced mid-speech (no pause found), the next segment starts
 // this far *before* the cut so a split word keeps context; the resulting
 // duplicated words are removed by joinWithDedup (lib/transcript.ts).
 export const OVERLAP_SAMPLES = Math.round(0.75 * SAMPLE_RATE);
+
+/**
+ * Bring a quiet recording up to a usable level before VAD and inference.
+ * Peak-based and capped so background noise isn't blown up. Mutates in place.
+ */
+export function normalizeGain(audio: Float32Array): void {
+  let peak = 0;
+  for (let i = 0; i < audio.length; i++) {
+    const a = Math.abs(audio[i]);
+    if (a > peak) peak = a;
+  }
+  if (peak > 0.001 && peak < 0.05) {
+    const gain = Math.min(0.3 / peak, 10);
+    for (let i = 0; i < audio.length; i++) audio[i] *= gain;
+  }
+}
 
 export interface CutPoint {
   /** Sample index relative to the start of the region passed in. */

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { startCapture, AudioCapture } from "../lib/audio";
-import { findCutPoint, hasSpeech, speechRatio, OVERLAP_SAMPLES } from "../lib/vad";
+import { findCutPoint, hasSpeech, speechRatio, normalizeGain, OVERLAP_SAMPLES } from "../lib/vad";
 import { joinWithDedup, isHallucination } from "../lib/transcript";
 import type { RecordingState } from "../types";
 
@@ -34,6 +34,9 @@ export function useRecording(
   const prevForcedRef = useRef<boolean>(false);
   const inflightRef = useRef<Promise<void> | null>(null);
   const pollRef = useRef<number | null>(null);
+  // True while startCapture() is awaited, so a fast double-click can't open a
+  // second mic stream and orphan the first one.
+  const startingRef = useRef<boolean>(false);
 
   // Request mic permission on mount so the prompt appears early
   useEffect(() => {
@@ -72,6 +75,7 @@ export function useRecording(
   const pumpSegment = useCallback(() => {
     if (inflightRef.current || !captureRef.current) return;
     const region = captureRef.current.getRange(cursorRef.current);
+    normalizeGain(region);
     const cut = findCutPoint(region);
     if (!cut) return;
 
@@ -128,6 +132,7 @@ export function useRecording(
       capture.stop(); // stops the mic; captured samples stay readable
       const durationSecs = capture.totalSamples() / 16000;
       const tail = capture.getRange(cursorRef.current);
+      normalizeGain(tail);
       captureRef.current = null;
 
       let finalText = committedRef.current;
@@ -157,6 +162,8 @@ export function useRecording(
       }
       return { text: finalText, durationSecs };
     } else {
+      if (startingRef.current) return null;
+      startingRef.current = true;
       try {
         setMicError(null);
         setNotice(null);
@@ -183,6 +190,8 @@ export function useRecording(
         } else {
           setMicError(errMsg);
         }
+      } finally {
+        startingRef.current = false;
       }
       return null;
     }

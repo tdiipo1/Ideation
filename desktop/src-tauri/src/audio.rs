@@ -12,6 +12,9 @@ pub struct SharedAudioBuffer {
     pub samples: Mutex<Vec<f32>>,
     pub is_recording: Mutex<bool>,
     pub source_sample_rate: Mutex<u32>,
+    /// Set by the capture thread when it fails (no device, unsupported format,
+    /// stream error). Readers use it to turn a silent failure into a visible one.
+    pub last_error: Mutex<Option<String>>,
 }
 
 impl SharedAudioBuffer {
@@ -20,7 +23,22 @@ impl SharedAudioBuffer {
             samples: Mutex::new(Vec::new()),
             is_recording: Mutex::new(false),
             source_sample_rate: Mutex::new(44100),
+            last_error: Mutex::new(None),
         })
+    }
+}
+
+/// Bring quiet recordings up to a usable level before VAD and inference.
+/// Desktop capture has no automatic gain control, so a soft-spoken user on a
+/// low-gain mic can sit entirely under the silence floor and be reported as
+/// "no speech". Scaling is peak-based and capped so noise isn't blown up.
+pub fn normalize_gain(audio: &mut [f32]) {
+    let peak = audio.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    if peak > 0.001 && peak < 0.05 {
+        let gain = (0.3 / peak).min(10.0);
+        for x in audio.iter_mut() {
+            *x *= gain;
+        }
     }
 }
 
@@ -35,11 +53,13 @@ pub fn start_recording(buffer: &Arc<SharedAudioBuffer>) -> Result<(), String> {
         *recording = true;
     }
     buffer.samples.lock().clear();
+    *buffer.last_error.lock() = None;
 
     let buffer = buffer.clone();
     std::thread::spawn(move || {
         if let Err(e) = run_recording_thread(&buffer) {
             eprintln!("Recording thread error: {}", e);
+            *buffer.last_error.lock() = Some(e);
             *buffer.is_recording.lock() = false;
         }
     });
@@ -70,9 +90,11 @@ fn run_recording_thread(buffer: &Arc<SharedAudioBuffer>) -> Result<(), String> {
             device.build_input_stream(
                 &config.into(),
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    // Average all channels: a mic wired to the right channel
+                    // only would otherwise record silence.
                     let mono: Vec<f32> = data
                         .chunks(channels)
-                        .map(|frame| frame[0])
+                        .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
                         .collect();
                     buf.samples.lock().extend_from_slice(&mono);
                 },
@@ -87,7 +109,10 @@ fn run_recording_thread(buffer: &Arc<SharedAudioBuffer>) -> Result<(), String> {
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
                     let mono: Vec<f32> = data
                         .chunks(channels)
-                        .map(|frame| frame[0] as f32 / 32768.0)
+                        .map(|frame| {
+                            frame.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
+                                / frame.len() as f32
+                        })
                         .collect();
                     buf.samples.lock().extend_from_slice(&mono);
                 },
@@ -102,7 +127,13 @@ fn run_recording_thread(buffer: &Arc<SharedAudioBuffer>) -> Result<(), String> {
                 move |data: &[u16], _: &cpal::InputCallbackInfo| {
                     let mono: Vec<f32> = data
                         .chunks(channels)
-                        .map(|frame| (frame[0] as f32 - 32768.0) / 32768.0)
+                        .map(|frame| {
+                            frame
+                                .iter()
+                                .map(|&s| (s as f32 - 32768.0) / 32768.0)
+                                .sum::<f32>()
+                                / frame.len() as f32
+                        })
                         .collect();
                     buf.samples.lock().extend_from_slice(&mono);
                 },
@@ -173,7 +204,7 @@ const VAD_FRAME_MS: usize = 30;
 const VAD_MIN_SEGMENT_MS: usize = 3000;
 const VAD_HARD_CAP_MS: usize = 20000;
 const VAD_SILENCE_MS: usize = 400;
-const VAD_ABS_FLOOR: f32 = 0.008;
+const VAD_ABS_FLOOR: f32 = 0.004;
 
 fn frame_rms(audio: &[f32]) -> f32 {
     if audio.is_empty() {

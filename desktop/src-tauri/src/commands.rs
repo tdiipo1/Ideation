@@ -21,6 +21,22 @@ pub struct TranscriptResult {
     pub timestamp: String,
 }
 
+/// Emitted as `transcribe-error` whenever a recording can't be turned into a
+/// transcript. `code` is stable for the UI (mic, no-model, audio, transcribe,
+/// history, internal); `message` is the human-readable detail.
+#[derive(Clone, serde::Serialize)]
+pub struct TranscribeError {
+    pub code: String,
+    pub message: String,
+}
+
+fn terr(code: &str, message: impl Into<String>) -> TranscribeError {
+    TranscribeError {
+        code: code.to_string(),
+        message: message.into(),
+    }
+}
+
 #[tauri::command]
 pub fn get_recording_state(state: State<'_, Arc<AppState>>) -> String {
     let s = state.recording_state.lock();
@@ -142,7 +158,7 @@ fn spawn_streaming_worker(
             }
 
             // Clone only the un-committed region (bounded by the VAD hard cap).
-            let region = {
+            let mut region = {
                 let samples = audio_buf.samples.lock();
                 if cursor < samples.len() {
                     samples[cursor..].to_vec()
@@ -150,6 +166,7 @@ fn spawn_streaming_worker(
                     Vec::new()
                 }
             };
+            crate::audio::normalize_gain(&mut region);
 
             if let Some(cut) = crate::audio::find_cut_point(&region, source_rate) {
                 let raw_segment = &region[..cut.index];
@@ -183,6 +200,23 @@ fn spawn_streaming_worker(
             }
 
             if !recording {
+                // The capture thread may have died (no input device, unsupported
+                // format, stream error). Nobody will call stop_recording for us
+                // in that case, so reset the app state here instead of leaving
+                // the UI stuck in "Recording".
+                if let Some(err) = audio_buf.last_error.lock().clone() {
+                    let st = app.state::<Arc<AppState>>();
+                    let was_recording = {
+                        let s = st.recording_state.lock();
+                        *s == RecordingState::Recording
+                    };
+                    if was_recording {
+                        *st.recording_state.lock() = RecordingState::Idle;
+                        let _ = app.emit("recording-state-changed", "idle");
+                        let _ = app.emit("transcribe-error", terr("mic", err));
+                        hide_indicator(&app);
+                    }
+                }
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -280,35 +314,50 @@ fn auto_paste_clipboard() {
     std::thread::spawn(|| {
         // Small delay to ensure clipboard is written
         std::thread::sleep(std::time::Duration::from_millis(150));
+        // Cmd+V on macOS, Ctrl+V everywhere else.
+        #[cfg(target_os = "macos")]
+        let modifier = Key::Meta;
+        #[cfg(not(target_os = "macos"))]
+        let modifier = Key::Control;
         if let Ok(mut enigo) = Enigo::new(&EnigoSettings::default()) {
-            let _ = enigo.key(Key::Control, Direction::Press);
+            let _ = enigo.key(modifier, Direction::Press);
             let _ = enigo.key(Key::Unicode('v'), Direction::Click);
-            let _ = enigo.key(Key::Control, Direction::Release);
+            let _ = enigo.key(modifier, Direction::Release);
         }
     });
 }
 
 #[tauri::command]
-pub fn start_recording(
+pub async fn start_recording(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
     audio_buf: State<'_, Arc<SharedAudioBuffer>>,
 ) -> Result<(), String> {
-    let mut rec_state = state.recording_state.lock();
-    if *rec_state == RecordingState::Recording {
-        return Err("Already recording".to_string());
+    {
+        let mut rec_state = state.recording_state.lock();
+        if *rec_state != RecordingState::Idle {
+            return Err("Already recording".to_string());
+        }
+        // Claim the state before the beep so a second toggle can't race us.
+        *rec_state = RecordingState::Recording;
     }
-
-    crate::audio::start_recording(&audio_buf)?;
-
-    *rec_state = RecordingState::Recording;
     let _ = app.emit("recording-state-changed", "recording");
-    show_indicator(&app);
 
     let s = settings::load();
     if s.sound_feedback {
+        // Play the beep and let it finish before the mic opens, so the tone is
+        // never part of the recording (it used to leak into the first segment).
         play_sound("start");
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
+
+    if let Err(e) = crate::audio::start_recording(&audio_buf) {
+        *state.recording_state.lock() = RecordingState::Idle;
+        let _ = app.emit("recording-state-changed", "idle");
+        let _ = app.emit("transcribe-error", terr("mic", e.clone()));
+        return Err(e);
+    }
+    show_indicator(&app);
 
     // Spawn the streaming worker so transcription happens progressively while
     // the user is still speaking (live captions + near-instant finalize).
@@ -325,24 +374,76 @@ pub async fn stop_recording(
     state: State<'_, Arc<AppState>>,
     audio_buf: State<'_, Arc<SharedAudioBuffer>>,
 ) -> Result<TranscriptResult, String> {
-    let s = settings::load();
-
     {
         let mut rec_state = state.recording_state.lock();
         if *rec_state != RecordingState::Recording {
             return Err("Not recording".to_string());
         }
         *rec_state = RecordingState::Processing;
-        let _ = app.emit("recording-state-changed", "processing");
     }
+    let _ = app.emit("recording-state-changed", "processing");
     hide_indicator(&app);
 
+    let s = settings::load();
+    let outcome = finish_recording(&state, &audio_buf, &s).await;
+
+    // Always return to Idle, whatever happened above. A failure in the tail
+    // used to leave the app stuck in Processing with the toggle refusing
+    // forever.
+    *state.recording_state.lock() = RecordingState::Idle;
+    let _ = app.emit("recording-state-changed", "idle");
+
+    match outcome {
+        Ok(Some(result)) => {
+            *state.last_transcript.lock() = result.healed.clone();
+            let _ = app.emit("transcript-ready", &result);
+
+            // Auto-copy to clipboard — write directly from the backend so it
+            // works regardless of whether the main webview is focused/visible
+            // (this is a tray app driven by a global shortcut). Must happen
+            // before auto-paste.
+            if s.auto_copy {
+                match app.clipboard().write_text(result.healed.clone()) {
+                    Ok(()) => {
+                        let _ = app.emit("auto-copied", ());
+                    }
+                    Err(e) => eprintln!("Auto-copy to clipboard failed: {}", e),
+                }
+            }
+            if s.auto_paste {
+                auto_paste_clipboard();
+            }
+            Ok(result)
+        }
+        Ok(None) => {
+            // Nothing intelligible — don't clobber the clipboard, auto-paste,
+            // or pollute history with an empty entry.
+            let _ = app.emit("no-speech", ());
+            Err("No speech detected".to_string())
+        }
+        Err(e) => {
+            eprintln!("Transcription failed ({}): {}", e.code, e.message);
+            let _ = app.emit("transcribe-error", &e);
+            Err(e.message)
+        }
+    }
+}
+
+/// Everything between "stop" and "transcript ready": stop capture, join the
+/// streaming worker, transcribe the remaining tail, heal, and save. Returns
+/// `Ok(None)` when no speech was found. The caller owns the state machine.
+async fn finish_recording(
+    state: &AppState,
+    audio_buf: &Arc<SharedAudioBuffer>,
+    s: &AppSettings,
+) -> Result<Option<TranscriptResult>, TranscribeError> {
+    // Stop capture first so the stop beep can never end up in the audio
+    // (the capture thread polls this flag every 50 ms).
+    *audio_buf.is_recording.lock() = false;
     if s.sound_feedback {
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
         play_sound("stop");
     }
-
-    // Signal both the cpal recording thread and the streaming worker to stop.
-    *audio_buf.is_recording.lock() = false;
 
     // Join the streaming worker (off the async runtime) to get the transcript
     // it built during recording plus how far it got (raw-sample cursor).
@@ -352,51 +453,49 @@ pub async fn stop_recording(
             h.join().unwrap_or_else(|_| (String::new(), 0, false))
         })
         .await
-        .map_err(|e| format!("Worker join error: {}", e))?
+        .map_err(|e| terr("internal", format!("Worker join error: {}", e)))?
     } else {
         (String::new(), 0, false)
     };
 
-    // Let the cpal thread flush its final buffer, then drain the tail.
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    let model_path = model_manager::model_path(&s.whisper_model);
-    let (tail_audio, duration_secs) = crate::audio::take_tail_16k(&audio_buf, cursor)?;
+    if let Some(err) = audio_buf.last_error.lock().clone() {
+        return Err(terr("mic", err));
+    }
 
-    let raw_transcript = if model_path.exists() {
-        // Transcribe only the small remaining tail, then assemble.
-        let tail_text = if crate::audio::has_speech(&tail_audio, 16000) {
-            let ratio = crate::audio::speech_ratio(&tail_audio, 16000);
-            let path = model_path.clone();
-            let tail = tail_audio;
-            let text = tokio::task::spawn_blocking(move || transcribe::transcribe(&path, &tail))
-                .await
-                .map_err(|e| format!("Task join error: {}", e))??;
-            if is_hallucination(&text, ratio) {
-                String::new()
-            } else {
-                text
-            }
-        } else {
+    // Let the cpal thread flush its final buffer, then drain the tail.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let (mut tail_audio, duration_secs) = crate::audio::take_tail_16k(audio_buf, cursor)
+        .map_err(|e| terr("audio", e))?;
+
+    let model_path = model_manager::model_path(&s.whisper_model);
+    if !model_path.exists() {
+        return Err(terr(
+            "no-model",
+            "Whisper model not downloaded. Open Settings to download it.",
+        ));
+    }
+
+    // Transcribe only the small remaining tail, then assemble.
+    crate::audio::normalize_gain(&mut tail_audio);
+    let tail_text = if crate::audio::has_speech(&tail_audio, 16000) {
+        let ratio = crate::audio::speech_ratio(&tail_audio, 16000);
+        let path = model_path.clone();
+        let text = tokio::task::spawn_blocking(move || transcribe::transcribe(&path, &tail_audio))
+            .await
+            .map_err(|e| terr("internal", format!("Task join error: {}", e)))?
+            .map_err(|e| terr("transcribe", e))?;
+        if is_hallucination(&text, ratio) {
             String::new()
-        };
-        join_with_dedup(&accumulated, &tail_text, prev_forced)
+        } else {
+            text
+        }
     } else {
-        format!(
-            "[Model not downloaded. Captured {:.1}s of audio. Please download the Whisper model first.]",
-            duration_secs
-        )
+        String::new()
     };
 
-    // Nothing intelligible — don't clobber the clipboard, auto-paste, or
-    // pollute history with an empty entry.
+    let raw_transcript = join_with_dedup(&accumulated, &tail_text, prev_forced);
     if raw_transcript.trim().is_empty() {
-        {
-            let mut rec_state = state.recording_state.lock();
-            *rec_state = RecordingState::Idle;
-        }
-        let _ = app.emit("recording-state-changed", "idle");
-        let _ = app.emit("no-speech", ());
-        return Err("No speech detected".to_string());
+        return Ok(None);
     }
 
     let healed_transcript = if s.healing_enabled {
@@ -405,45 +504,16 @@ pub async fn stop_recording(
         raw_transcript.clone()
     };
 
-    // Save to history
-    let entry = history::add_entry(duration_secs, &raw_transcript, &healed_transcript)?;
+    let entry = history::add_entry(duration_secs, &raw_transcript, &healed_transcript)
+        .map_err(|e| terr("history", e))?;
 
-    let result = TranscriptResult {
+    Ok(Some(TranscriptResult {
         id: entry.id,
         raw: raw_transcript,
-        healed: healed_transcript.clone(),
+        healed: healed_transcript,
         duration_secs,
         timestamp: entry.timestamp,
-    };
-
-    *state.last_transcript.lock() = healed_transcript;
-
-    {
-        let mut rec_state = state.recording_state.lock();
-        *rec_state = RecordingState::Idle;
-    }
-
-    let _ = app.emit("recording-state-changed", "idle");
-    let _ = app.emit("transcript-ready", &result);
-
-    // Auto-copy to clipboard — write directly from the backend so it works
-    // regardless of whether the main webview is focused/visible (this is a
-    // tray app driven by a global shortcut). Must happen before auto-paste.
-    if s.auto_copy {
-        match app.clipboard().write_text(result.healed.clone()) {
-            Ok(()) => {
-                let _ = app.emit("auto-copied", ());
-            }
-            Err(e) => eprintln!("Auto-copy to clipboard failed: {}", e),
-        }
-    }
-
-    // Auto-paste
-    if s.auto_paste {
-        auto_paste_clipboard();
-    }
-
-    Ok(result)
+    }))
 }
 
 #[tauri::command]
@@ -455,7 +525,7 @@ pub async fn toggle_recording(
     let current_state = state.recording_state.lock().clone();
     match current_state {
         RecordingState::Idle => {
-            start_recording(app, state, audio_buf)?;
+            start_recording(app, state, audio_buf).await?;
             Ok("recording".to_string())
         }
         RecordingState::Recording => {
