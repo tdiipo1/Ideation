@@ -7,13 +7,25 @@ import ModelStatus from "../components/ModelStatus";
 import MicButton from "../components/MicButton";
 import TranscriptBox from "../components/TranscriptBox";
 import ShortcutHint from "../components/ShortcutHint";
+import { defaultModelFor } from "../lib/models";
+import { uiLanguage } from "../lib/languages";
+
+// Lite has no settings: the model follows the browser language (tiny.en for
+// English, Base multilingual otherwise) and the spoken language is detected.
+const LITE_MODEL = defaultModelFor(uiLanguage());
 
 export default function AppLite() {
-  const { modelState, modelProgress, error, transcribe, transcribeSegment } = useWhisper(
-    "onnx-community/whisper-tiny.en",
-  );
+  const {
+    modelState,
+    modelProgress,
+    error,
+    transcribe,
+    transcribeSegment,
+    startSession,
+    detectedLanguage,
+  } = useWhisper(LITE_MODEL, "auto");
   const { state, toggle, micError, openInTab, partialText, audioLevel, notice } =
-    useRecording(transcribe, transcribeSegment);
+    useRecording(transcribe, transcribeSegment, startSession);
   const [transcript, setTranscript] = useState<string | null>(null);
   const [autoCopied, setAutoCopied] = useState(false);
 
@@ -90,6 +102,7 @@ export default function AppLite() {
         onInsert={(t) => insertIntoPage(t)}
         accent="orange"
         autoCopied={autoCopied}
+        detectedLanguage={detectedLanguage}
       />
 
       <footer className="text-[10px] text-neutral-700 text-center mt-auto pt-2">

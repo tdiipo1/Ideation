@@ -6,6 +6,7 @@ mod model_manager;
 mod settings;
 mod state;
 mod structuring;
+mod text;
 mod transcribe;
 
 use audio::SharedAudioBuffer;

@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import type { ExtSettings } from "../types";
 import { fetchGeminiModels, GeminiModel } from "../lib/structuring";
 import { SHARED_GEMINI_KEY } from "../types";
+import { WHISPER_MODELS, BASE_MULTI, isMultilingualModel } from "../lib/models";
+import { LANGUAGES, languageName } from "../lib/languages";
 
 interface SettingsPanelProps {
   settings: ExtSettings;
@@ -49,31 +51,51 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
     }, 2000);
   }
 
+  const modelIsMultilingual = isMultilingualModel(settings.modelId);
+  const pinnedNonEnglish = settings.language !== "auto" && settings.language !== "en";
+
   return (
     <div className="flex flex-col gap-4">
+      {/* Language */}
+      <section>
+        <h3 className="text-xs font-semibold text-neutral-400 mb-2">Language</h3>
+        <select
+          value={settings.language}
+          onChange={(e) => onUpdate({ language: e.target.value })}
+          className="w-full text-xs px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded focus:outline-none focus:border-blue-500"
+        >
+          {LANGUAGES.map(([code, name]) => (
+            <option key={code} value={code}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <p className="text-[10px] text-neutral-600 mt-1">
+          Auto-detect reads the language from the first seconds of each recording, then keeps it
+          for the rest of it.
+        </p>
+        {pinnedNonEnglish && !modelIsMultilingual && (
+          <div className="mt-2 text-[10px] text-amber-400 bg-amber-400/10 px-2 py-1.5 rounded flex items-center justify-between gap-2">
+            <span>{languageName(settings.language)} needs a multilingual model.</span>
+            <button
+              onClick={() => onUpdate({ modelId: BASE_MULTI })}
+              className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 rounded whitespace-nowrap"
+            >
+              Use Base (Multilingual)
+            </button>
+          </div>
+        )}
+        {!pinnedNonEnglish && !modelIsMultilingual && (
+          <p className="text-[10px] text-neutral-600 mt-1">
+            The selected model is English-only; other languages won't be recognized.
+          </p>
+        )}
+      </section>
+
       {/* Whisper Model */}
       <section>
         <h3 className="text-xs font-semibold text-neutral-400 mb-2">Whisper Model</h3>
-        {[
-          {
-            id: "onnx-community/whisper-tiny.en",
-            label: "Tiny (English)",
-            size: "~75 MB",
-            note: "Default — fastest",
-          },
-          {
-            id: "onnx-community/whisper-base.en",
-            label: "Base (English)",
-            size: "~150 MB",
-            note: "Higher quality, slower than Tiny",
-          },
-          {
-            id: "onnx-community/whisper-base",
-            label: "Base (Multilingual)",
-            size: "~150 MB",
-            note: "99 languages, slightly slower",
-          },
-        ].map((m) => (
+        {WHISPER_MODELS.map((m) => (
           <label
             key={m.id}
             className={`flex items-start gap-2 px-2.5 py-2 rounded border mb-1 cursor-pointer ${
@@ -91,7 +113,12 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
             <div className="flex flex-col flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs">{m.label}</span>
-                <span className="text-[10px] text-neutral-500">{m.size}</span>
+                <span className="text-[10px] text-neutral-500">{m.sizeNote}</span>
+                {m.gpuRecommended && (
+                  <span className="text-[9px] px-1 py-px rounded bg-neutral-800 text-neutral-400">
+                    GPU
+                  </span>
+                )}
               </div>
               <span className="text-[10px] text-neutral-600">{m.note}</span>
             </div>

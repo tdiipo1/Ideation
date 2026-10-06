@@ -27,6 +27,12 @@ export interface ExtSettings {
   insertIntoPage: boolean;
   /** User dismissed the "your device can run a better model" banner. */
   modelNudgeDismissed: boolean;
+  /** Spoken language: "auto" (detect once per recording, then lock) or an ISO-639-1 code. */
+  language: string;
+  /** Optional LLM pass that fixes misheard words using sentence context (Full only). */
+  smartCorrection: boolean;
+  /** User dismissed the "switch to a multilingual model" banner. */
+  multilingualNudgeDismissed: boolean;
 }
 
 export const DEFAULT_SETTINGS: ExtSettings = {
@@ -38,6 +44,9 @@ export const DEFAULT_SETTINGS: ExtSettings = {
   llmModel: "",
   insertIntoPage: false,
   modelNudgeDismissed: false,
+  language: "auto",
+  smartCorrection: false,
+  multilingualNudgeDismissed: false,
 };
 
 // Shared Gemini API key — free tier, no billing attached, rate limited

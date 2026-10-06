@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { LANGUAGES, languageName } from "../lib/languages";
 
 interface AppSettings {
   shortcut: string;
@@ -12,6 +13,11 @@ interface AppSettings {
   llm_provider: string;
   llm_api_key: string;
   llm_model: string;
+  language: string;
+  smart_correction: boolean;
+  use_gpu: boolean;
+  ui_language: string;
+  model_nudge_dismissed: boolean;
 }
 
 interface ModelInfo {
@@ -20,6 +26,7 @@ interface ModelInfo {
   description: string;
   filename: string;
   size_mb: number;
+  english_only: boolean;
 }
 
 export default function Settings() {
@@ -88,10 +95,85 @@ export default function Settings() {
     setSaved(false);
   }
 
+  // Select a model; download it first if it isn't on disk, then warm the
+  // cache so the first transcription doesn't pay the disk-read cost.
+  async function selectModel(model: ModelInfo) {
+    update({ whisper_model: model.filename });
+    if (downloaded[model.filename]) return;
+    setDownloadError(null);
+    setDownloadProgress((prev) => ({ ...prev, [model.name]: 0 }));
+    try {
+      await invoke("download_model", { modelName: model.name });
+      setDownloaded((prev) => ({ ...prev, [model.filename]: true }));
+      setDownloadProgress((prev) => {
+        const next = { ...prev };
+        delete next[model.name];
+        return next;
+      });
+      setPreloading(model.filename);
+      try {
+        await invoke("preload_model", { filename: model.filename });
+      } finally {
+        setPreloading(null);
+      }
+    } catch (err) {
+      setDownloadError(String(err));
+      setDownloadProgress((prev) => {
+        const next = { ...prev };
+        delete next[model.name];
+        return next;
+      });
+      setPreloading(null);
+    }
+  }
+
   if (!settings) return null;
+
+  const currentModel = models.find((m) => m.filename === settings.whisper_model);
+  const modelIsEnglishOnly = currentModel ? currentModel.english_only : false;
+  const pinnedNonEnglish = settings.language !== "auto" && settings.language !== "en";
+  const multilingualFallback = models.find((m) => m.name === "base");
 
   return (
     <div className="flex flex-col gap-5">
+      {/* Language */}
+      <section>
+        <h3 className="text-sm font-semibold text-neutral-400 mb-2">Language</h3>
+        <p className="text-xs text-neutral-500 mb-2">
+          Auto-detect reads the language from the first seconds of each recording, then keeps
+          it for the rest of it. Pin a language if detection ever guesses wrong.
+        </p>
+        <select
+          value={settings.language}
+          onChange={(e) => update({ language: e.target.value })}
+          className="w-full text-sm px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md focus:outline-none focus:border-blue-500"
+        >
+          {LANGUAGES.map(([code, name]) => (
+            <option key={code} value={code}>
+              {name}
+            </option>
+          ))}
+        </select>
+        {pinnedNonEnglish && modelIsEnglishOnly && (
+          <div className="mt-2 text-xs text-amber-400 bg-amber-400/10 px-3 py-2 rounded-md flex items-center justify-between gap-3">
+            <span>{languageName(settings.language)} needs a multilingual model.</span>
+            {multilingualFallback && (
+              <button
+                onClick={() => selectModel(multilingualFallback)}
+                className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 rounded whitespace-nowrap"
+              >
+                Use Base (Multilingual)
+              </button>
+            )}
+          </div>
+        )}
+        {!pinnedNonEnglish && modelIsEnglishOnly && (
+          <p className="text-xs text-neutral-600 mt-2">
+            The selected model is English-only; other languages won't be recognized.
+          </p>
+        )}
+      </section>
+
       {/* Shortcut */}
       <section>
         <h3 className="text-sm font-semibold text-neutral-400 mb-2">
@@ -128,29 +210,7 @@ export default function Settings() {
                 type="radio"
                 name="model"
                 checked={settings.whisper_model === model.filename}
-                onChange={async () => {
-                  update({ whisper_model: model.filename });
-                  if (!downloaded[model.filename]) {
-                    setDownloadError(null);
-                    setDownloadProgress((prev) => ({ ...prev, [model.name]: 0 }));
-                    try {
-                      await invoke("download_model", { modelName: model.name });
-                      setDownloaded((prev) => ({ ...prev, [model.filename]: true }));
-                      setDownloadProgress((prev) => { const next = { ...prev }; delete next[model.name]; return next; });
-                      // Preload into WhisperContext so first transcription is fast
-                      setPreloading(model.filename);
-                      try {
-                        await invoke("preload_model", { filename: model.filename });
-                      } finally {
-                        setPreloading(null);
-                      }
-                    } catch (err) {
-                      setDownloadError(String(err));
-                      setDownloadProgress((prev) => { const next = { ...prev }; delete next[model.name]; return next; });
-                      setPreloading(null);
-                    }
-                  }
-                }}
+                onChange={() => selectModel(model)}
                 className="accent-blue-500"
               />
               <div className="flex-1 min-w-0">
@@ -161,6 +221,11 @@ export default function Settings() {
                       ? `${(model.size_mb / 1024).toFixed(1)} GB`
                       : `${model.size_mb} MB`}
                   </span>
+                  {!model.english_only && (
+                    <span className="text-[10px] px-1 py-px rounded bg-neutral-800 text-neutral-400">
+                      multilingual
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-neutral-600">{model.description}</p>
               </div>

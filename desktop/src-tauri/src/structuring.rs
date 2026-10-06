@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-const SYSTEM_PROMPT: &str = "Restructure this spoken transcript into a clear, organized prompt for an AI assistant. Preserve all meaning and details. Use sections/headers for multiple topics, bullet points for lists. Fix grammar, remove filler words. Output only the structured prompt.";
+const SYSTEM_PROMPT: &str = "Restructure the spoken transcript inside <transcript> tags into a clear, organized prompt for an AI assistant. Preserve all meaning and details. Use sections/headers for multiple topics, bullet points for lists. Fix grammar, remove filler words. Write the output in the same language as the transcript; do not translate. Output only the structured prompt.";
+
+/// Delimit user speech so a small model restructures it instead of answering it.
+pub fn wrap_transcript(transcript: &str) -> String {
+    format!("<transcript>\n{}\n</transcript>", transcript.trim())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
@@ -57,9 +62,11 @@ struct GeminiPart {
 pub async fn structure_prompt(
     app: &tauri::AppHandle,
     config: &LlmConfig,
-    transcript: &str,
+    raw_transcript: &str,
 ) -> Result<String, String> {
     let client = reqwest::Client::new();
+    let wrapped = wrap_transcript(raw_transcript);
+    let transcript = wrapped.as_str();
 
     match config.provider.as_str() {
         "local" => call_local(app, transcript).await,

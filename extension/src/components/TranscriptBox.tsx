@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { languageName } from "../lib/languages";
 
 interface TranscriptBoxProps {
   text: string | null;
@@ -14,6 +15,21 @@ interface TranscriptBoxProps {
   structureError?: string | null;
   accent?: "blue" | "orange";
   autoCopied?: boolean;
+  /** Language detected/locked for the current or last recording. */
+  detectedLanguage?: string | null;
+}
+
+function LanguageChip({ code }: { code: string | null | undefined }) {
+  const name = languageName(code);
+  if (!name) return null;
+  return (
+    <span
+      className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 whitespace-nowrap"
+      title="Detected language"
+    >
+      {name}
+    </span>
+  );
 }
 
 interface LiveSegment {
@@ -55,6 +71,7 @@ export default function TranscriptBox({
   structureError,
   accent = "blue",
   autoCopied = false,
+  detectedLanguage = null,
 }: TranscriptBoxProps) {
   const [viewMode, setViewMode] = useState<"healed" | "raw" | "structured">("healed");
   const [copied, setCopied] = useState(false);
@@ -178,6 +195,9 @@ export default function TranscriptBox({
                 Finishing up…
               </span>
             )}
+            <span className="ml-auto">
+              <LanguageChip code={detectedLanguage} />
+            </span>
           </div>
         )}
       </div>
@@ -256,6 +276,7 @@ export default function TranscriptBox({
               Prompt
             </button>
           )}
+          <LanguageChip code={detectedLanguage} />
         </div>
         <div className="flex gap-1">
           {onInsert && (

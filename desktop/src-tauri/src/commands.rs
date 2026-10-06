@@ -3,7 +3,8 @@ use crate::healing;
 use crate::history;
 use crate::model_manager;
 use crate::settings::{self, AppSettings};
-use crate::state::{AppState, RecordingState};
+use crate::state::{AppState, RecordingState, WorkerOutcome};
+use crate::text::{is_hallucination, join_with_dedup};
 use crate::transcribe;
 use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
 use std::path::PathBuf;
@@ -129,16 +130,35 @@ fn spawn_streaming_worker(
     app: AppHandle,
     audio_buf: Arc<SharedAudioBuffer>,
     model_path: PathBuf,
-) -> JoinHandle<(String, usize, bool)> {
+    language_setting: String,
+) -> JoinHandle<WorkerOutcome> {
     std::thread::spawn(move || {
+        let mut outcome = WorkerOutcome::default();
+
+        // No model on disk — let stop_recording report it.
+        if !model_path.exists() {
+            return outcome;
+        }
+        let mut session = match transcribe::Session::new(&model_path, &language_setting) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to start transcription session: {}", e);
+                return outcome;
+            }
+        };
+        if !session.is_multilingual() && language_setting != "auto" && language_setting != "en" {
+            let _ = app.emit(
+                "notice",
+                "The selected language needs a multilingual model — transcribing as English.",
+            );
+        }
+
         let mut cursor: usize = 0;
         let mut accumulated = String::new();
         let mut prev_forced = false;
-
-        // No model on disk — let stop_recording produce the placeholder.
-        if !model_path.exists() {
-            return (accumulated, cursor, prev_forced);
-        }
+        let mut announced: Option<String> = None;
+        // Language of the last decoded segment, for recordings too short to lock.
+        let mut last_language: Option<String> = None;
 
         loop {
             let recording = *audio_buf.is_recording.lock();
@@ -172,16 +192,22 @@ fn spawn_streaming_worker(
                 let raw_segment = &region[..cut.index];
                 if crate::audio::has_speech(raw_segment, source_rate) {
                     let ratio = crate::audio::speech_ratio(raw_segment, source_rate);
+                    let voiced_secs = ratio * raw_segment.len() as f32 / source_rate as f32;
                     match crate::audio::resample_to_16k(raw_segment, source_rate) {
-                        Ok(seg16k) => {
-                            if let Ok(text) = transcribe::transcribe(&model_path, &seg16k) {
-                                if !is_hallucination(&text, ratio) {
+                        Ok(seg16k) => match session.transcribe(&seg16k, voiced_secs) {
+                            Ok(out) => {
+                                if !is_hallucination(&out.text, ratio) {
                                     accumulated =
-                                        join_with_dedup(&accumulated, &text, prev_forced);
+                                        join_with_dedup(&accumulated, &out.text, prev_forced);
                                     let _ = app.emit("transcript-partial", accumulated.clone());
                                 }
+                                if out.language.is_some() {
+                                    last_language = out.language;
+                                }
+                                announce_language(&app, &session, &mut announced);
                             }
-                        }
+                            Err(e) => eprintln!("Streaming transcription failed: {}", e),
+                        },
                         Err(e) => eprintln!("Streaming resample failed: {}", e),
                     }
                 }
@@ -222,92 +248,36 @@ fn spawn_streaming_worker(
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
-        (accumulated, cursor, prev_forced)
+        outcome.text = accumulated;
+        outcome.cursor = cursor;
+        outcome.prev_forced = prev_forced;
+        outcome.language = session
+            .locked_language()
+            .map(|s| s.to_string())
+            .or(last_language);
+        outcome.session = Some(session);
+        outcome
     })
 }
 
-fn norm_word(w: &str) -> String {
-    w.chars()
-        .filter(|c| c.is_alphanumeric() || *c == '\'')
-        .collect::<String>()
-        .to_lowercase()
-}
-
-/// Join a new segment onto the committed transcript, removing duplicated
-/// words at the seam. After a forced cut the next segment re-hears an
-/// overlap, so a 1-word match is enough (`aggressive`); otherwise require
-/// ≥3 matching words so legitimate repetition is never eaten.
-/// Mirrors extension/src/lib/transcript.ts.
-fn join_with_dedup(committed: &str, next: &str, aggressive: bool) -> String {
-    let a = committed.trim();
-    let b = next.trim();
-    if a.is_empty() {
-        return b.to_string();
-    }
-    if b.is_empty() {
-        return a.to_string();
-    }
-
-    let a_words: Vec<&str> = a.split_whitespace().collect();
-    let b_words: Vec<&str> = b.split_whitespace().collect();
-    let max_k = 8usize.min(a_words.len()).min(b_words.len());
-    let min_k = if aggressive { 1 } else { 3 };
-
-    let mut drop = 0;
-    let mut k = max_k;
-    while k >= min_k {
-        let mut matches = true;
-        for i in 0..k {
-            let wa = norm_word(a_words[a_words.len() - k + i]);
-            let wb = norm_word(b_words[i]);
-            if wa.is_empty() || wa != wb {
-                matches = false;
-                break;
-            }
+/// Emit `language-detected` the first time the session commits to a language.
+fn announce_language(
+    app: &AppHandle,
+    session: &transcribe::Session,
+    announced: &mut Option<String>,
+) {
+    if let Some(code) = session.locked_language() {
+        if announced.as_deref() != Some(code) {
+            *announced = Some(code.to_string());
+            let name = whisper_rs::get_lang_id(code)
+                .and_then(whisper_rs::get_lang_str_full)
+                .unwrap_or(code);
+            let _ = app.emit(
+                "language-detected",
+                serde_json::json!({ "code": code, "name": name }),
+            );
         }
-        if matches {
-            drop = k;
-            break;
-        }
-        k -= 1;
     }
-
-    let rest = b_words[drop..].join(" ");
-    if rest.is_empty() {
-        a.to_string()
-    } else {
-        format!("{} {}", a, rest)
-    }
-}
-
-// Phrases Whisper famously invents on silence/breath/noise. Only dropped
-// when the audio was mostly unvoiced — a real "Thank you." is kept.
-const HALLUCINATIONS: &[&str] = &[
-    "thank you",
-    "thanks",
-    "thank you very much",
-    "thanks for watching",
-    "thank you for watching",
-    "please subscribe",
-    "please like and subscribe",
-    "see you in the next video",
-    "see you next time",
-    "bye",
-    "you",
-    "so",
-];
-
-fn is_hallucination(text: &str, speech_ratio: f32) -> bool {
-    let t: String = text
-        .to_lowercase()
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '\'' || c.is_whitespace())
-        .collect();
-    let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
-    if t.is_empty() {
-        return true;
-    }
-    speech_ratio < 0.25 && HALLUCINATIONS.contains(&t.as_str())
 }
 
 fn auto_paste_clipboard() {
@@ -362,7 +332,12 @@ pub async fn start_recording(
     // Spawn the streaming worker so transcription happens progressively while
     // the user is still speaking (live captions + near-instant finalize).
     let model_path = model_manager::model_path(&s.whisper_model);
-    let worker = spawn_streaming_worker(app.clone(), Arc::clone(&audio_buf), model_path);
+    let worker = spawn_streaming_worker(
+        app.clone(),
+        Arc::clone(&audio_buf),
+        model_path,
+        s.language.clone(),
+    );
     *state.streaming_worker.lock() = Some(worker);
 
     Ok(())
@@ -448,15 +423,20 @@ async fn finish_recording(
     // Join the streaming worker (off the async runtime) to get the transcript
     // it built during recording plus how far it got (raw-sample cursor).
     let handle = state.streaming_worker.lock().take();
-    let (accumulated, cursor, prev_forced) = if let Some(h) = handle {
-        tokio::task::spawn_blocking(move || {
-            h.join().unwrap_or_else(|_| (String::new(), 0, false))
-        })
-        .await
-        .map_err(|e| terr("internal", format!("Worker join error: {}", e)))?
+    let outcome = if let Some(h) = handle {
+        tokio::task::spawn_blocking(move || h.join().unwrap_or_default())
+            .await
+            .map_err(|e| terr("internal", format!("Worker join error: {}", e)))?
     } else {
-        (String::new(), 0, false)
+        WorkerOutcome::default()
     };
+    let WorkerOutcome {
+        text: accumulated,
+        cursor,
+        prev_forced,
+        session,
+        language: worker_language,
+    } = outcome;
 
     if let Some(err) = audio_buf.last_error.lock().clone() {
         return Err(terr("mic", err));
@@ -475,23 +455,40 @@ async fn finish_recording(
         ));
     }
 
-    // Transcribe only the small remaining tail, then assemble.
+    // Transcribe only the small remaining tail (reusing the worker's session
+    // so the locked language carries over), then assemble.
     crate::audio::normalize_gain(&mut tail_audio);
-    let tail_text = if crate::audio::has_speech(&tail_audio, 16000) {
-        let ratio = crate::audio::speech_ratio(&tail_audio, 16000);
-        let path = model_path.clone();
-        let text = tokio::task::spawn_blocking(move || transcribe::transcribe(&path, &tail_audio))
-            .await
-            .map_err(|e| terr("internal", format!("Task join error: {}", e)))?
-            .map_err(|e| terr("transcribe", e))?;
-        if is_hallucination(&text, ratio) {
-            String::new()
-        } else {
-            text
-        }
+    let tail_has_speech = crate::audio::has_speech(&tail_audio, 16000);
+    let ratio = if tail_has_speech {
+        crate::audio::speech_ratio(&tail_audio, 16000)
     } else {
-        String::new()
+        0.0
     };
+    let voiced_secs = ratio * tail_audio.len() as f32 / 16000.0;
+    let language_setting = s.language.clone();
+    let (tail_text, language) = tokio::task::spawn_blocking(
+        move || -> Result<(String, Option<String>), String> {
+            let mut session = match session {
+                Some(sess) => sess,
+                None => transcribe::Session::new(&model_path, &language_setting)?,
+            };
+            let mut text = String::new();
+            if tail_has_speech {
+                let out = session.transcribe(&tail_audio, voiced_secs)?;
+                if !is_hallucination(&out.text, ratio) {
+                    text = out.text;
+                }
+            }
+            let language = session
+                .locked_language()
+                .map(|l| l.to_string())
+                .or(worker_language);
+            Ok((text, language))
+        },
+    )
+    .await
+    .map_err(|e| terr("internal", format!("Task join error: {}", e)))?
+    .map_err(|e| terr("transcribe", e))?;
 
     let raw_transcript = join_with_dedup(&accumulated, &tail_text, prev_forced);
     if raw_transcript.trim().is_empty() {
@@ -499,7 +496,7 @@ async fn finish_recording(
     }
 
     let healed_transcript = if s.healing_enabled {
-        healing::heal_transcript(&raw_transcript)
+        healing::heal_transcript(&raw_transcript, language.as_deref())
     } else {
         raw_transcript.clone()
     };

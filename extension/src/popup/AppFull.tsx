@@ -9,6 +9,16 @@ import { healTranscript } from "../lib/healing";
 import { structurePrompt } from "../lib/structuring";
 import { saveSettings } from "../lib/storage";
 import { SHARED_GEMINI_KEY } from "../types";
+import {
+  BASE_EN,
+  BASE_MULTI,
+  SMALL_MULTI,
+  TINY_EN,
+  findModel,
+  isMultilingualModel,
+  multilingualUpgradeFor,
+} from "../lib/models";
+import { languageName, uiLanguage } from "../lib/languages";
 import ModelStatus from "../components/ModelStatus";
 import MicButton from "../components/MicButton";
 import TranscriptBox from "../components/TranscriptBox";
@@ -20,8 +30,21 @@ type Tab = "record" | "history" | "settings";
 
 export default function AppFull() {
   const { settings, update: updateSettings, save: saveSettingsDraft } = useSettings();
-  const { modelState, modelProgress, error, device, transcribe, transcribeSegment } = useWhisper(settings.modelId);
-  const { state, toggle, micError, openInTab, partialText, audioLevel, notice } = useRecording(transcribe, transcribeSegment);
+  const {
+    modelState,
+    modelProgress,
+    error,
+    device,
+    transcribe,
+    transcribeSegment,
+    startSession,
+    detectedLanguage,
+  } = useWhisper(settings.modelId, settings.language);
+  const { state, toggle, micError, openInTab, partialText, audioLevel, notice } = useRecording(
+    transcribe,
+    transcribeSegment,
+    startSession,
+  );
   const { entries, add, remove, clear } = useHistory();
   const [tab, setTab] = useState<Tab>("record");
   const [transcript, setTranscript] = useState<string | null>(null);
@@ -61,7 +84,9 @@ export default function AppFull() {
     const result = await toggle();
     if (result) {
       const raw = result.text;
-      const healed = settings.healingEnabled ? healTranscript(raw) : raw;
+      const healLang =
+        result.language ?? (settings.language !== "auto" ? settings.language : null);
+      const healed = settings.healingEnabled ? healTranscript(raw, healLang) : raw;
 
       setTranscript(raw);
       setHealedTranscript(healed);
@@ -84,19 +109,50 @@ export default function AppFull() {
   }
   toggleRef.current = handleToggle;
 
-  // One-time nudge: WebGPU machines handle base.en comfortably and it's a
-  // clear accuracy upgrade over the tiny.en default.
+  const ui = uiLanguage();
+  const idleReady = modelState === "ready" && state === "idle";
+
+  // One-time nudge for users whose browser isn't in English but who are on
+  // an English-only model (existing installs predate the multilingual
+  // default). Never a silent download: they choose.
+  const multilingualTarget = multilingualUpgradeFor(device);
+  const showMultilingualNudge =
+    ui !== "en" &&
+    !isMultilingualModel(settings.modelId) &&
+    !settings.multilingualNudgeDismissed &&
+    idleReady;
+
+  function applyMultilingualNudge(accept: boolean) {
+    const patch = accept
+      ? { modelId: multilingualTarget, multilingualNudgeDismissed: true }
+      : { multilingualNudgeDismissed: true };
+    updateSettings(patch);
+    saveSettings({ ...settings, ...patch });
+  }
+
+  // One-time nudge: WebGPU machines handle the next model tier comfortably
+  // and it's a clear accuracy upgrade (tiny.en → base.en for English users,
+  // Base → Small multilingual for everyone else).
+  const gpuUpgradeTarget =
+    ui === "en"
+      ? settings.modelId === TINY_EN
+        ? BASE_EN
+        : null
+      : settings.modelId === BASE_MULTI
+        ? SMALL_MULTI
+        : null;
   const showModelNudge =
+    !showMultilingualNudge &&
     device === "webgpu" &&
-    settings.modelId === "onnx-community/whisper-tiny.en" &&
+    gpuUpgradeTarget !== null &&
     !settings.modelNudgeDismissed &&
-    modelState === "ready" &&
-    state === "idle";
+    idleReady;
 
   function applyModelNudge(accept: boolean) {
-    const patch = accept
-      ? { modelId: "onnx-community/whisper-base.en", modelNudgeDismissed: true }
-      : { modelNudgeDismissed: true };
+    const patch =
+      accept && gpuUpgradeTarget
+        ? { modelId: gpuUpgradeTarget, modelNudgeDismissed: true }
+        : { modelNudgeDismissed: true };
     updateSettings(patch);
     // Persist directly — useSettings.save() reads a ref that may not have
     // caught up with this render yet.
@@ -185,10 +241,34 @@ export default function AppFull() {
           {notice && state === "idle" && !transcript && (
             <p className="text-[10px] text-neutral-500 text-center -mt-2">{notice}</p>
           )}
-          {showModelNudge && (
+          {showMultilingualNudge && (
             <div className="bg-neutral-900 rounded-lg p-2.5 border border-blue-900/60 flex flex-col gap-1.5">
               <p className="text-[11px] text-neutral-300">
-                Your device has GPU acceleration — the <b>Base</b> model is noticeably
+                Your browser is set to <b>{languageName(ui)}</b>, but the current model only
+                understands English. Switch to{" "}
+                <b>{findModel(multilingualTarget)?.label ?? "a multilingual model"}</b>?
+              </p>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => applyMultilingualNudge(true)}
+                  className="text-[10px] px-2.5 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
+                >
+                  Switch
+                </button>
+                <button
+                  onClick={() => applyMultilingualNudge(false)}
+                  className="text-[10px] px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded transition-colors"
+                >
+                  Keep English
+                </button>
+              </div>
+            </div>
+          )}
+          {showModelNudge && gpuUpgradeTarget && (
+            <div className="bg-neutral-900 rounded-lg p-2.5 border border-blue-900/60 flex flex-col gap-1.5">
+              <p className="text-[11px] text-neutral-300">
+                Your device has GPU acceleration — the{" "}
+                <b>{findModel(gpuUpgradeTarget)?.label ?? "larger"}</b> model is noticeably
                 more accurate and still fast here.
               </p>
               <div className="flex gap-1.5">
@@ -196,13 +276,13 @@ export default function AppFull() {
                   onClick={() => applyModelNudge(true)}
                   className="text-[10px] px-2.5 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
                 >
-                  Switch to Base
+                  Switch
                 </button>
                 <button
                   onClick={() => applyModelNudge(false)}
                   className="text-[10px] px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded transition-colors"
                 >
-                  Keep Tiny
+                  Keep current
                 </button>
               </div>
             </div>
@@ -220,6 +300,7 @@ export default function AppFull() {
             isStructuring={isStructuring}
             structureError={structureError}
             autoCopied={autoCopied}
+            detectedLanguage={detectedLanguage}
           />
         </>
       )}

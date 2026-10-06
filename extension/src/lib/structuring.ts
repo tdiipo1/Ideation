@@ -1,4 +1,9 @@
-const SYSTEM_PROMPT = `Restructure this spoken transcript into a clear, organized prompt for an AI assistant. Preserve all meaning and details. Use sections/headers for multiple topics, bullet points for lists. Fix grammar, remove filler words. Output only the structured prompt.`;
+const SYSTEM_PROMPT = `Restructure the spoken transcript inside <transcript> tags into a clear, organized prompt for an AI assistant. Preserve all meaning and details. Use sections/headers for multiple topics, bullet points for lists. Fix grammar, remove filler words. Write the output in the same language as the transcript; do not translate. Output only the structured prompt.`;
+
+/** Delimit user speech so a small model restructures it instead of answering it. */
+export function wrapTranscript(transcript: string): string {
+  return `<transcript>\n${transcript.trim()}\n</transcript>`;
+}
 
 export interface LlmConfig {
   provider: "gemini" | "openai" | "anthropic" | "groq";
@@ -29,8 +34,9 @@ export async function fetchGeminiModels(apiKey: string): Promise<GeminiModel[]> 
 
 export async function structurePrompt(
   config: LlmConfig,
-  transcript: string,
+  rawTranscript: string,
 ): Promise<string> {
+  const transcript = wrapTranscript(rawTranscript);
   switch (config.provider) {
     case "gemini":
       return callGemini(config, transcript);

@@ -5,12 +5,14 @@ import TranscriptView from "./components/TranscriptView";
 import ModelDownloader from "./components/ModelDownloader";
 import HistoryView from "./components/HistoryView";
 import Settings from "./components/Settings";
+import MultilingualNudge from "./components/MultilingualNudge";
 import { useRecording } from "./hooks/useRecording";
 
 type Tab = "record" | "history" | "settings";
 
 function App() {
-  const { state, transcript, toggle, copyToClipboard, audioLevel, notice } = useRecording();
+  const { state, transcript, toggle, copyToClipboard, audioLevel, notice, detectedLanguage } =
+    useRecording();
   const [tab, setTab] = useState<Tab>("record");
   const [historyRefresh, setHistoryRefresh] = useState(0);
 
@@ -56,6 +58,7 @@ function App() {
         {tab === "record" && (
           <>
             <ModelDownloader />
+            <MultilingualNudge />
             <StatusIndicator state={state} onToggle={toggle} />
             {notice && state === "idle" && (
               <p className="text-xs text-neutral-500 text-center">{notice}</p>
@@ -66,6 +69,7 @@ function App() {
               isProcessing={state === "processing"}
               isRecording={state === "recording"}
               audioLevel={audioLevel}
+              detectedLanguage={detectedLanguage}
             />
           </>
         )}

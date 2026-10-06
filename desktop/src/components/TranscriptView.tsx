@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { languageName } from "../lib/languages";
 
 interface TranscriptResult {
   raw: string;
@@ -15,6 +16,21 @@ interface TranscriptViewProps {
   isProcessing: boolean;
   isRecording: boolean;
   audioLevel?: number;
+  /** Language detected/locked for the current or last recording. */
+  detectedLanguage?: string | null;
+}
+
+function LanguageChip({ code }: { code: string | null | undefined }) {
+  const name = languageName(code);
+  if (!name) return null;
+  return (
+    <span
+      className="text-xs px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 whitespace-nowrap"
+      title="Detected language"
+    >
+      {name}
+    </span>
+  );
 }
 
 interface LiveSegment {
@@ -49,6 +65,7 @@ export default function TranscriptView({
   isProcessing,
   isRecording,
   audioLevel = 0,
+  detectedLanguage = null,
 }: TranscriptViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("healed");
   const [structured, setStructured] = useState<string | null>(null);
@@ -196,6 +213,7 @@ export default function TranscriptView({
               {transcript.duration_secs.toFixed(1)}s
             </span>
           )}
+          <LanguageChip code={detectedLanguage} />
         </div>
         {transcript && (
           <div className="flex items-center gap-2">

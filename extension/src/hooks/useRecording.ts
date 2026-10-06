@@ -3,18 +3,22 @@ import { startCapture, AudioCapture } from "../lib/audio";
 import { findCutPoint, hasSpeech, speechRatio, normalizeGain, OVERLAP_SAMPLES } from "../lib/vad";
 import { joinWithDedup, isHallucination } from "../lib/transcript";
 import type { RecordingState } from "../types";
+import type { Transcriber } from "./useWhisper";
 
-interface RecordingResult {
+export interface RecordingResult {
   text: string;
   durationSecs: number;
+  /** Language the recording was transcribed in (ISO-639-1), when known. */
+  language: string | null;
 }
 
 // How often to check the growing audio buffer for a chunk to transcribe.
 const POLL_MS = 1000;
 
 export function useRecording(
-  onTranscribe: (audio: Float32Array) => Promise<string>,
-  onTranscribeSegment: (audio: Float32Array) => Promise<string> = onTranscribe,
+  onTranscribe: Transcriber,
+  onTranscribeSegment: Transcriber = onTranscribe,
+  onSessionStart?: () => void,
 ) {
   const [state, setState] = useState<RecordingState>("idle");
   const [micError, setMicError] = useState<string | null>(null);
@@ -32,6 +36,7 @@ export function useRecording(
   const cursorRef = useRef<number>(0);
   const committedRef = useRef<string>("");
   const prevForcedRef = useRef<boolean>(false);
+  const languageRef = useRef<string | null>(null);
   const inflightRef = useRef<Promise<void> | null>(null);
   const pollRef = useRef<number | null>(null);
   // True while startCapture() is awaited, so a fast double-click can't open a
@@ -83,9 +88,13 @@ export function useRecording(
     const wasForced = prevForcedRef.current;
     const promise = (async () => {
       try {
-        const text = await onTranscribeSegment(segment);
-        if (!isHallucination(text, speechRatio(segment))) {
-          committedRef.current = joinWithDedup(committedRef.current, text, wasForced);
+        const ratio = speechRatio(segment);
+        const out = await onTranscribeSegment(segment, {
+          voicedSecs: (ratio * segment.length) / 16000,
+        });
+        if (out.language) languageRef.current = out.language;
+        if (!isHallucination(out.text, ratio)) {
+          committedRef.current = joinWithDedup(committedRef.current, out.text, wasForced);
           if (mountedRef.current) setPartialText(committedRef.current);
         }
         // On a forced cut, back the cursor up so the next segment re-hears
@@ -138,9 +147,11 @@ export function useRecording(
       let finalText = committedRef.current;
       try {
         if (hasSpeech(tail)) {
-          const tailText = await onTranscribe(tail);
-          if (!isHallucination(tailText, speechRatio(tail))) {
-            finalText = joinWithDedup(finalText, tailText, prevForcedRef.current);
+          const ratio = speechRatio(tail);
+          const out = await onTranscribe(tail, { voicedSecs: (ratio * tail.length) / 16000 });
+          if (out.language) languageRef.current = out.language;
+          if (!isHallucination(out.text, ratio)) {
+            finalText = joinWithDedup(finalText, out.text, prevForcedRef.current);
           }
         }
       } catch (err) {
@@ -154,13 +165,15 @@ export function useRecording(
 
       if (mountedRef.current) setState("idle");
       finalText = finalText.trim();
+      const language = languageRef.current;
+      languageRef.current = null;
       if (!finalText) {
         // Nothing intelligible — don't clobber the user's clipboard or
         // pollute history with an empty entry.
         if (mountedRef.current) setNotice("No speech detected");
         return null;
       }
-      return { text: finalText, durationSecs };
+      return { text: finalText, durationSecs, language };
     } else {
       if (startingRef.current) return null;
       startingRef.current = true;
@@ -171,7 +184,9 @@ export function useRecording(
         cursorRef.current = 0;
         committedRef.current = "";
         prevForcedRef.current = false;
+        languageRef.current = null;
         levelRef.current = 0;
+        onSessionStart?.();
         captureRef.current = await startCapture((rms) => {
           // Fast attack, slow decay — reads naturally on a meter.
           levelRef.current = Math.max(
@@ -195,7 +210,7 @@ export function useRecording(
       }
       return null;
     }
-  }, [state, onTranscribe, pumpSegment]);
+  }, [state, onTranscribe, onSessionStart, pumpSegment]);
 
   const openInTab = useCallback(() => {
     // Open the popup page as a full tab where mic permissions work reliably

@@ -12,6 +12,8 @@ pub struct ModelInfo {
     pub url: String,
     pub sha256: String,
     pub size_mb: u64,
+    /// English-only checkpoints can't transcribe other languages at all.
+    pub english_only: bool,
 }
 
 pub fn available_models() -> Vec<ModelInfo> {
@@ -21,6 +23,7 @@ pub fn available_models() -> Vec<ModelInfo> {
     vec![
         ModelInfo {
             name: "base.en".to_string(),
+            english_only: true,
             label: "Base (English)".to_string(),
             description: "Default — fast and accurate".to_string(),
             filename: "ggml-base.en.bin".to_string(),
@@ -32,6 +35,7 @@ pub fn available_models() -> Vec<ModelInfo> {
         },
         ModelInfo {
             name: "small.en".to_string(),
+            english_only: true,
             label: "Small (English)".to_string(),
             description: "Better accuracy, slower".to_string(),
             filename: "ggml-small.en.bin".to_string(),
@@ -43,6 +47,7 @@ pub fn available_models() -> Vec<ModelInfo> {
         },
         ModelInfo {
             name: "base".to_string(),
+            english_only: false,
             label: "Base (Multilingual)".to_string(),
             description: "99 languages, slightly slower".to_string(),
             filename: "ggml-base.bin".to_string(),
@@ -53,7 +58,19 @@ pub fn available_models() -> Vec<ModelInfo> {
             size_mb: 142,
         },
         ModelInfo {
+            name: "small".to_string(),
+            english_only: false,
+            label: "Small (Multilingual)".to_string(),
+            description: "Much better for Spanish, Chinese, Portuguese… Good middle ground.".to_string(),
+            filename: "ggml-small.bin".to_string(),
+            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+                .to_string(),
+            sha256: "".to_string(),
+            size_mb: 466,
+        },
+        ModelInfo {
             name: "large-v3-turbo".to_string(),
+            english_only: false,
             label: "Large v3 Turbo (Multilingual)".to_string(),
             description: "Top quality, all languages. Best on fast machines.".to_string(),
             filename: "ggml-large-v3-turbo-q5_0.bin".to_string(),
@@ -64,6 +81,7 @@ pub fn available_models() -> Vec<ModelInfo> {
         },
         ModelInfo {
             name: "distil-large-v3.5".to_string(),
+            english_only: true,
             label: "Distil Large v3.5 (English)".to_string(),
             description: "Highest quality English. Best on fast machines, short clips.".to_string(),
             filename: "ggml-distil-large-v3.5.bin".to_string(),

@@ -23,6 +23,8 @@ export function useRecording() {
   const [audioLevel, setAudioLevel] = useState(0);
   // One-shot user-facing notice, e.g. "No speech detected".
   const [notice, setNotice] = useState<string | null>(null);
+  // Language the backend detected/locked for the current or last recording.
+  const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
 
   useEffect(() => {
     let level = 0;
@@ -30,6 +32,7 @@ export function useRecording() {
       setState(event.payload as RecordingState);
       if (event.payload === "recording") {
         setNotice(null);
+        setDetectedLanguage(null);
       }
       if (event.payload !== "recording") {
         level = 0;
@@ -54,6 +57,19 @@ export function useRecording() {
       setNotice("No speech detected");
     });
 
+    const unlistenLanguage = listen<{ code: string; name: string }>(
+      "language-detected",
+      (event) => {
+        setDetectedLanguage(event.payload.code);
+      },
+    );
+
+    // Informational messages from the backend (e.g. a pinned language the
+    // current model can't honour).
+    const unlistenNotice = listen<string>("notice", (event) => {
+      setNotice(event.payload);
+    });
+
     // Any failure between stop and transcript (mic died, model missing,
     // inference error). The backend has already returned to idle.
     const unlistenError = listen<{ code: string; message: string }>(
@@ -69,6 +85,8 @@ export function useRecording() {
       unlistenLevel.then((fn) => fn());
       unlistenNoSpeech.then((fn) => fn());
       unlistenError.then((fn) => fn());
+      unlistenLanguage.then((fn) => fn());
+      unlistenNotice.then((fn) => fn());
     };
   }, []);
 
@@ -91,5 +109,5 @@ export function useRecording() {
     [transcript],
   );
 
-  return { state, transcript, toggle, copyToClipboard, audioLevel, notice };
+  return { state, transcript, toggle, copyToClipboard, audioLevel, notice, detectedLanguage };
 }

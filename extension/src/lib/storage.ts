@@ -1,4 +1,6 @@
 import { HistoryEntry, ExtSettings, DEFAULT_SETTINGS } from "../types";
+import { defaultModelFor } from "./models";
+import { uiLanguage } from "./languages";
 
 // History
 export async function getHistory(): Promise<HistoryEntry[]> {
@@ -27,7 +29,18 @@ export async function clearHistory(): Promise<void> {
 
 // Settings
 export async function getSettings(): Promise<ExtSettings> {
-  const data = await chrome.storage.local.get("settings");
+  const data = await chrome.storage.local.get(["settings", "history"]);
+  if (!data.settings) {
+    // Fresh install (no settings and no history): pick the model from the
+    // browser language so a Spanish or Chinese user starts with a model that
+    // understands them. Existing users without saved settings keep the
+    // English default and get a one-time banner instead.
+    const fresh: ExtSettings = { ...DEFAULT_SETTINGS };
+    const isFreshInstall = !Array.isArray(data.history) || data.history.length === 0;
+    if (isFreshInstall) fresh.modelId = defaultModelFor(uiLanguage());
+    await chrome.storage.local.set({ settings: fresh });
+    return fresh;
+  }
   return { ...DEFAULT_SETTINGS, ...data.settings };
 }
 

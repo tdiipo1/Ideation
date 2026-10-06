@@ -14,17 +14,41 @@ interface ModelProgress {
   total?: number;
 }
 
+export interface TranscribeOutput {
+  text: string;
+  /** Language the clip was decoded in (ISO-639-1), when known. */
+  language: string | null;
+}
+
+export interface TranscribeOpts {
+  /** Seconds of voiced audio in the clip; gates the auto-detect lock. */
+  voicedSecs?: number;
+  /** Receives the growing text of this clip while it is being decoded. */
+  onPartial?: (text: string) => void;
+}
+
+export type Transcriber = (audio: Float32Array, opts?: TranscribeOpts) => Promise<TranscribeOutput>;
+
 // Module-level singletons so the worker + state survive component remounts
 // (the Chrome side panel mounts/unmounts frequently).
 let worker: Worker | null = null;
 let loadedModel: string | null = null;
 let loadedDevice: string | null = null;
+let loadedMultilingual = false;
 let modelReady = false;
 let reqCounter = 0;
+// The language setting the next session starts with, and what the current
+// session detected/locked.
+let sessionLanguageSetting = "auto";
+let sessionDetectedLanguage: string | null = null;
 
 const pending = new Map<
   number,
-  { resolve: (text: string) => void; reject: (err: unknown) => void }
+  {
+    resolve: (out: TranscribeOutput) => void;
+    reject: (err: unknown) => void;
+    onPartial?: (text: string) => void;
+  }
 >();
 
 // Settles when the current model finishes loading (rejects on load failure
@@ -50,6 +74,8 @@ interface Listener {
   onProgress: (p: ModelProgress) => void;
   onError: (e: string | null) => void;
   onDevice: (d: string | null) => void;
+  onMultilingual: (m: boolean) => void;
+  onLanguage: (code: string | null) => void;
 }
 const listeners = new Set<Listener>();
 
@@ -67,29 +93,46 @@ function ensureWorker(): Worker {
       case "model-progress":
         listeners.forEach((l) => l.onProgress(payload as ModelProgress));
         break;
-      case "model-ready":
+      case "model-ready": {
+        // Ignore a stale "ready" from a model we already moved away from.
+        if (payload?.model && payload.model !== loadedModel) break;
         modelReady = true;
         loadedDevice = (payload && payload.device) || null;
+        loadedMultilingual = !!payload?.multilingual;
         readyResolve?.();
         listeners.forEach((l) => {
           l.onState("ready");
           l.onError(null);
           l.onDevice(loadedDevice);
+          l.onMultilingual(loadedMultilingual);
         });
         break;
-      case "model-error":
+      }
+      case "model-error": {
+        if (payload?.model && payload.model !== loadedModel) break;
         modelReady = false;
-        readyReject?.(new Error(String(payload)));
+        const message = typeof payload === "string" ? payload : String(payload?.message ?? payload);
+        readyReject?.(new Error(message));
         listeners.forEach((l) => {
           l.onState("error");
-          l.onError(String(payload));
+          l.onError(message);
         });
         break;
+      }
+      case "language-detected":
+        sessionDetectedLanguage = payload?.code ?? null;
+        listeners.forEach((l) => l.onLanguage(sessionDetectedLanguage));
+        break;
+      case "partial": {
+        const p = pending.get(payload.requestId);
+        p?.onPartial?.(payload.text);
+        break;
+      }
       case "result": {
         const p = pending.get(payload.requestId);
         if (p) {
           pending.delete(payload.requestId);
-          p.resolve(payload.text);
+          p.resolve({ text: payload.text, language: payload.language ?? null });
         }
         break;
       }
@@ -124,30 +167,61 @@ function loadModel(model: string) {
 async function postTranscribe(
   audio: Float32Array,
   segment: boolean,
-): Promise<string> {
+  opts: TranscribeOpts = {},
+): Promise<TranscribeOutput> {
   const wk = ensureWorker();
   if (!modelReady) await readyPromise;
   const requestId = ++reqCounter;
   // Copy the (possibly sub-array) audio into its own buffer and transfer it
   // to the worker to avoid a structured-clone copy.
   const buf = audio.slice();
-  return new Promise<string>((resolve, reject) => {
-    pending.set(requestId, { resolve, reject });
+  return new Promise<TranscribeOutput>((resolve, reject) => {
+    pending.set(requestId, { resolve, reject, onPartial: opts.onPartial });
     wk.postMessage(
       {
         type: segment ? "transcribe-segment" : "transcribe",
-        payload: { audio: buf, requestId },
+        payload: {
+          audio: buf,
+          requestId,
+          voicedSecs: opts.voicedSecs ?? 0,
+          wantPartial: !!opts.onPartial,
+        },
       },
       [buf.buffer],
     );
   });
 }
 
-export function useWhisper(modelId: string) {
+/** Begin a recording session: resets the detected language and tells the worker the language policy. */
+function startSession(): void {
+  sessionDetectedLanguage = null;
+  listeners.forEach((l) => l.onLanguage(null));
+  ensureWorker().postMessage({
+    type: "session-start",
+    payload: { language: sessionLanguageSetting },
+  });
+}
+
+/** The language detected/locked in the current session, readable outside React. */
+export function getSessionLanguage(): string | null {
+  return sessionDetectedLanguage;
+}
+
+/**
+ * @param modelId Whisper model to load, or null to wait (e.g. until settings are read).
+ * @param language "auto" or an ISO-639-1 code for the next recording session.
+ */
+export function useWhisper(modelId: string | null, language: string = "auto") {
   const [modelState, setModelState] = useState<ModelState>("not-loaded");
   const [modelProgress, setModelProgress] = useState<ModelProgress>({});
   const [error, setError] = useState<string | null>(null);
   const [device, setDevice] = useState<string | null>(loadedDevice);
+  const [multilingual, setMultilingual] = useState<boolean>(loadedMultilingual);
+  const [detectedLanguage, setDetectedLanguage] = useState<string | null>(sessionDetectedLanguage);
+
+  useEffect(() => {
+    sessionLanguageSetting = language || "auto";
+  }, [language]);
 
   useEffect(() => {
     const listener: Listener = {
@@ -155,13 +229,18 @@ export function useWhisper(modelId: string) {
       onProgress: setModelProgress,
       onError: setError,
       onDevice: setDevice,
+      onMultilingual: setMultilingual,
+      onLanguage: setDetectedLanguage,
     };
     listeners.add(listener);
 
-    if (loadedModel === modelId && modelReady) {
+    if (modelId === null) {
+      setModelState("not-loaded");
+    } else if (loadedModel === modelId && modelReady) {
       setModelState("ready");
       setError(null);
       setDevice(loadedDevice);
+      setMultilingual(loadedMultilingual);
     } else {
       setModelState("loading");
       setError(null);
@@ -175,16 +254,28 @@ export function useWhisper(modelId: string) {
   }, [modelId]);
 
   // Final (full-clip) transcription used at stop.
-  const transcribe = useCallback(
-    (audio: Float32Array) => postTranscribe(audio, false),
+  const transcribe = useCallback<Transcriber>(
+    (audio, opts) => postTranscribe(audio, false, opts),
     [],
   );
 
   // Streaming-segment transcription used while recording.
-  const transcribeSegment = useCallback(
-    (audio: Float32Array) => postTranscribe(audio, true),
+  const transcribeSegment = useCallback<Transcriber>(
+    (audio, opts) => postTranscribe(audio, true, opts),
     [],
   );
 
-  return { modelState, modelProgress, error, device, transcribe, transcribeSegment };
+  const startSessionCb = useCallback(() => startSession(), []);
+
+  return {
+    modelState,
+    modelProgress,
+    error,
+    device,
+    multilingual,
+    detectedLanguage,
+    transcribe,
+    transcribeSegment,
+    startSession: startSessionCb,
+  };
 }
