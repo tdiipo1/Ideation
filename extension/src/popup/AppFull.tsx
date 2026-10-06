@@ -29,7 +29,8 @@ import ShortcutHint from "../components/ShortcutHint";
 type Tab = "record" | "history" | "settings";
 
 export default function AppFull() {
-  const { settings, update: updateSettings, save: saveSettingsDraft } = useSettings();
+  const { settings, loaded: settingsLoaded, update: updateSettings, save: saveSettingsDraft } =
+    useSettings();
   const {
     modelState,
     modelProgress,
@@ -39,12 +40,20 @@ export default function AppFull() {
     transcribeSegment,
     startSession,
     detectedLanguage,
-  } = useWhisper(settings.modelId, settings.language);
-  const { state, toggle, micError, openInTab, partialText, audioLevel, notice } = useRecording(
-    transcribe,
-    transcribeSegment,
-    startSession,
-  );
+    // Wait for the stored settings so the saved model loads first, instead of
+    // the default one and then the saved one.
+  } = useWhisper(settingsLoaded ? settings.modelId : null, settings.language);
+  const {
+    state,
+    toggle,
+    micError,
+    openInTab,
+    partialText,
+    pendingText,
+    backlogSecs,
+    audioLevel,
+    notice,
+  } = useRecording(transcribe, transcribeSegment, startSession);
   const { entries, add, remove, clear } = useHistory();
   const [tab, setTab] = useState<Tab>("record");
   const [transcript, setTranscript] = useState<string | null>(null);
@@ -237,6 +246,7 @@ export default function AppFull() {
             onToggle={handleToggle}
             disabled={modelState !== "ready"}
             audioLevel={audioLevel}
+            backlogSecs={backlogSecs}
           />
           {notice && state === "idle" && !transcript && (
             <p className="text-[10px] text-neutral-500 text-center -mt-2">{notice}</p>
@@ -294,6 +304,8 @@ export default function AppFull() {
             isRecording={state === "recording"}
             isProcessing={state === "processing"}
             audioLevel={audioLevel}
+            pendingText={pendingText}
+            backlogSecs={backlogSecs}
             onCopy={(t) => copyToClipboard(t)}
             onInsert={(t) => insertIntoPage(t)}
             onStructure={handleStructure}

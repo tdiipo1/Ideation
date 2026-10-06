@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { languageName } from "../lib/languages";
+import { isNoSpaceScript } from "../lib/transcript";
 
 interface TranscriptBoxProps {
   text: string | null;
@@ -8,6 +9,10 @@ interface TranscriptBoxProps {
   isRecording?: boolean;
   isProcessing?: boolean;
   audioLevel?: number;
+  /** Tokens of the segment being decoded right now (streamed). */
+  pendingText?: string | null;
+  /** Seconds of captured audio not yet transcribed. */
+  backlogSecs?: number;
   onCopy: (text: string) => void;
   onInsert?: (text: string) => Promise<boolean>;
   onStructure?: () => void;
@@ -64,6 +69,8 @@ export default function TranscriptBox({
   isRecording,
   isProcessing,
   audioLevel = 0,
+  pendingText = null,
+  backlogSecs = 0,
   onCopy,
   onInsert,
   onStructure,
@@ -88,6 +95,8 @@ export default function TranscriptBox({
 
   const live = !!isRecording || !!isProcessing;
   const liveText = live ? text || "" : "";
+  const pending = live ? (pendingText || "").trim() : "";
+  const behind = Math.round(backlogSecs);
 
   useEffect(() => {
     if (!live) {
@@ -151,26 +160,34 @@ export default function TranscriptBox({
           ref={scrollRef}
           className="flex-1 bg-neutral-900 rounded-lg p-3 overflow-y-auto border border-neutral-800 max-h-64 min-h-[8rem]"
         >
-          {segments.length > 0 ? (
+          {segments.length > 0 || pending ? (
             <p className="text-xs leading-relaxed whitespace-pre-wrap">
               {segments.map((seg) =>
                 seg.animate ? (
-                  seg.text.split(/(\s+)/).map((part, i) =>
-                    part.trim() ? (
-                      <span
-                        key={`${seg.id}-${i}`}
-                        className="inline-block animate-word-in"
-                        style={{ animationDelay: `${Math.min(i * 30, 450)}ms` }}
-                      >
-                        {part}
-                      </span>
-                    ) : (
-                      <span key={`${seg.id}-${i}`}>{part}</span>
-                    ),
+                  // Scripts without word spaces animate per character.
+                  (isNoSpaceScript(seg.text) ? [...seg.text] : seg.text.split(/(\s+)/)).map(
+                    (part, i) =>
+                      part.trim() ? (
+                        <span
+                          key={`${seg.id}-${i}`}
+                          className="inline-block animate-word-in"
+                          style={{ animationDelay: `${Math.min(i * 30, 450)}ms` }}
+                        >
+                          {part}
+                        </span>
+                      ) : (
+                        <span key={`${seg.id}-${i}`}>{part}</span>
+                      ),
                   )
                 ) : (
                   <span key={seg.id}>{seg.text}</span>
                 ),
+              )}
+              {pending && (
+                <span className="text-neutral-400">
+                  {segments.length > 0 && !isNoSpaceScript(pending) ? " " : ""}
+                  {pending}
+                </span>
               )}
               <span className="inline-block w-[2px] h-3 ml-0.5 align-middle bg-neutral-300 animate-caret" />
             </p>
@@ -180,19 +197,23 @@ export default function TranscriptBox({
               <p className="text-neutral-400 text-xs">Listening…</p>
             </div>
           ) : (
-            <p className="text-neutral-500 text-xs animate-pulse">Transcribing…</p>
+            <p className="text-neutral-500 text-xs animate-pulse">
+              {behind > 1 ? `Transcribing… ${behind} s left` : "Transcribing…"}
+            </p>
           )}
         </div>
-        {segments.length > 0 && (
+        {(segments.length > 0 || pending) && (
           <div className="flex items-center gap-2 px-1">
             {isRecording ? (
               <>
                 <LevelBars level={audioLevel} accent={accent} />
-                <span className="text-[10px] text-neutral-500">Listening…</span>
+                <span className="text-[10px] text-neutral-500">
+                  {behind > 2 ? `Transcribing… (${behind} s behind)` : "Listening…"}
+                </span>
               </>
             ) : (
               <span className="text-[10px] text-neutral-500 animate-pulse">
-                Finishing up…
+                {behind > 1 ? `Finishing up… (${behind} s left)` : "Finishing up…"}
               </span>
             )}
             <span className="ml-auto">

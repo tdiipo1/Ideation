@@ -81,6 +81,13 @@ const listeners = new Set<Listener>();
 
 function ensureWorker(): Worker {
   if (worker) return worker;
+  // Model weights live in the Cache API (80–600 MB). Ask the browser not to
+  // evict them under storage pressure; the call is a no-op if unsupported.
+  try {
+    navigator.storage?.persist?.().catch(() => {});
+  } catch {
+    /* ignore */
+  }
   worker = new Worker(new URL("../workers/whisper.worker.ts", import.meta.url), {
     type: "module",
   });

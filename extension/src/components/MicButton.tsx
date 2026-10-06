@@ -7,6 +7,8 @@ interface MicButtonProps {
   accent?: "blue" | "orange";
   /** Live mic level (0..1) — drives the pulsing ring while recording. */
   audioLevel?: number;
+  /** Seconds of audio still to transcribe while processing. */
+  backlogSecs?: number;
 }
 
 const accents = {
@@ -14,7 +16,14 @@ const accents = {
   orange: { idle: "bg-orange-500 hover:bg-orange-600 shadow-orange-500/30", copy: "bg-orange-600 hover:bg-orange-500" },
 };
 
-export default function MicButton({ state, onToggle, disabled, accent = "blue", audioLevel = 0 }: MicButtonProps) {
+export default function MicButton({
+  state,
+  onToggle,
+  disabled,
+  accent = "blue",
+  audioLevel = 0,
+  backlogSecs = 0,
+}: MicButtonProps) {
   const colors = accents[accent];
   const isRecording = state === "recording";
   const isProcessing = state === "processing";
@@ -66,7 +75,9 @@ export default function MicButton({ state, onToggle, disabled, accent = "blue", 
         {isRecording
           ? "Recording... Click to stop"
           : isProcessing
-            ? "Transcribing..."
+            ? backlogSecs > 1
+              ? `Transcribing… ${Math.round(backlogSecs)} s left`
+              : "Transcribing..."
             : disabled
               ? "Waiting for model..."
               : "Click to record"}

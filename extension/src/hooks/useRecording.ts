@@ -1,6 +1,14 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { startCapture, AudioCapture } from "../lib/audio";
-import { findCutPoint, hasSpeech, speechRatio, normalizeGain, OVERLAP_SAMPLES } from "../lib/vad";
+import {
+  findCutPoint,
+  hasSpeech,
+  speechRatio,
+  normalizeGain,
+  setMinSegmentSecs,
+  resetMinSegmentSecs,
+  OVERLAP_SAMPLES,
+} from "../lib/vad";
 import { joinWithDedup, isHallucination } from "../lib/transcript";
 import type { RecordingState } from "../types";
 import type { Transcriber } from "./useWhisper";
@@ -13,7 +21,7 @@ export interface RecordingResult {
 }
 
 // How often to check the growing audio buffer for a chunk to transcribe.
-const POLL_MS = 1000;
+const POLL_MS = 250;
 
 export function useRecording(
   onTranscribe: Transcriber,
@@ -23,6 +31,10 @@ export function useRecording(
   const [state, setState] = useState<RecordingState>("idle");
   const [micError, setMicError] = useState<string | null>(null);
   const [partialText, setPartialText] = useState<string | null>(null);
+  // Text of the segment currently being decoded, streamed token by token.
+  const [pendingText, setPendingText] = useState<string | null>(null);
+  // Seconds of captured audio not yet transcribed (shown as "N s behind").
+  const [backlogSecs, setBacklogSecs] = useState(0);
   // Smoothed mic input level (0..1) for the live meter.
   const [audioLevel, setAudioLevel] = useState(0);
   // One-shot user-facing notice, e.g. "No speech detected".
@@ -78,25 +90,44 @@ export function useRecording(
   // Transcribe one committed segment in the background, advancing the cursor
   // and the live partial transcript. Guarded so only one runs at a time.
   const pumpSegment = useCallback(() => {
-    if (inflightRef.current || !captureRef.current) return;
+    if (!captureRef.current) return;
+    if (mountedRef.current) {
+      setBacklogSecs((captureRef.current.totalSamples() - cursorRef.current) / 16000);
+    }
+    if (inflightRef.current) return;
     const region = captureRef.current.getRange(cursorRef.current);
     normalizeGain(region);
     const cut = findCutPoint(region);
     if (!cut) return;
 
     const segment = region.subarray(0, cut.index);
+    // Silence (a long pause): nothing to transcribe, just move on. This also
+    // keeps the model from inventing text out of breath noise.
+    if (!hasSpeech(segment)) {
+      cursorRef.current += cut.index;
+      prevForcedRef.current = false;
+      return;
+    }
     const wasForced = prevForcedRef.current;
     const promise = (async () => {
+      const started = performance.now();
       try {
         const ratio = speechRatio(segment);
         const out = await onTranscribeSegment(segment, {
           voicedSecs: (ratio * segment.length) / 16000,
+          onPartial: (t) => {
+            if (mountedRef.current) setPendingText(t);
+          },
         });
         if (out.language) languageRef.current = out.language;
         if (!isHallucination(out.text, ratio)) {
           committedRef.current = joinWithDedup(committedRef.current, out.text, wasForced);
           if (mountedRef.current) setPartialText(committedRef.current);
         }
+        // Slow device? Make the next segments longer so fewer full-window
+        // encoder passes are needed per second of speech.
+        const inferenceSecs = (performance.now() - started) / 1000;
+        setMinSegmentSecs(inferenceSecs * 1.5);
         // On a forced cut, back the cursor up so the next segment re-hears
         // the split word; joinWithDedup removes the repeated words.
         cursorRef.current += cut.forced
@@ -109,6 +140,7 @@ export function useRecording(
         console.warn("Segment transcription failed:", err);
       } finally {
         inflightRef.current = null;
+        if (mountedRef.current) setPendingText(null);
       }
     })();
     inflightRef.current = promise;
@@ -143,12 +175,18 @@ export function useRecording(
       const tail = capture.getRange(cursorRef.current);
       normalizeGain(tail);
       captureRef.current = null;
+      if (mountedRef.current) setBacklogSecs(tail.length / 16000);
 
       let finalText = committedRef.current;
       try {
         if (hasSpeech(tail)) {
           const ratio = speechRatio(tail);
-          const out = await onTranscribe(tail, { voicedSecs: (ratio * tail.length) / 16000 });
+          const out = await onTranscribe(tail, {
+            voicedSecs: (ratio * tail.length) / 16000,
+            onPartial: (t) => {
+              if (mountedRef.current) setPendingText(t);
+            },
+          });
           if (out.language) languageRef.current = out.language;
           if (!isHallucination(out.text, ratio)) {
             finalText = joinWithDedup(finalText, out.text, prevForcedRef.current);
@@ -161,6 +199,10 @@ export function useRecording(
         cursorRef.current = 0;
         committedRef.current = "";
         prevForcedRef.current = false;
+        if (mountedRef.current) {
+          setPendingText(null);
+          setBacklogSecs(0);
+        }
       }
 
       if (mountedRef.current) setState("idle");
@@ -186,6 +228,9 @@ export function useRecording(
         prevForcedRef.current = false;
         languageRef.current = null;
         levelRef.current = 0;
+        setPendingText(null);
+        setBacklogSecs(0);
+        resetMinSegmentSecs();
         onSessionStart?.();
         captureRef.current = await startCapture((rms) => {
           // Fast attack, slow decay — reads naturally on a meter.
@@ -217,5 +262,15 @@ export function useRecording(
     chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") });
   }, []);
 
-  return { state, toggle, micError, openInTab, partialText, audioLevel, notice };
+  return {
+    state,
+    toggle,
+    micError,
+    openInTab,
+    partialText,
+    pendingText,
+    backlogSecs,
+    audioLevel,
+    notice,
+  };
 }

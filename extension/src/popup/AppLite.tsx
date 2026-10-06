@@ -24,8 +24,17 @@ export default function AppLite() {
     startSession,
     detectedLanguage,
   } = useWhisper(LITE_MODEL, "auto");
-  const { state, toggle, micError, openInTab, partialText, audioLevel, notice } =
-    useRecording(transcribe, transcribeSegment, startSession);
+  const {
+    state,
+    toggle,
+    micError,
+    openInTab,
+    partialText,
+    pendingText,
+    backlogSecs,
+    audioLevel,
+    notice,
+  } = useRecording(transcribe, transcribeSegment, startSession);
   const [transcript, setTranscript] = useState<string | null>(null);
   const [autoCopied, setAutoCopied] = useState(false);
 
@@ -89,6 +98,7 @@ export default function AppLite() {
         disabled={modelState !== "ready"}
         accent="orange"
         audioLevel={audioLevel}
+        backlogSecs={backlogSecs}
       />
       {notice && state === "idle" && !transcript && (
         <p className="text-[10px] text-neutral-500 text-center -mt-2">{notice}</p>
@@ -98,6 +108,8 @@ export default function AppLite() {
         isRecording={state === "recording"}
         isProcessing={state === "processing"}
         audioLevel={audioLevel}
+        pendingText={pendingText}
+        backlogSecs={backlogSecs}
         onCopy={(t) => copyToClipboard(t)}
         onInsert={(t) => insertIntoPage(t)}
         accent="orange"

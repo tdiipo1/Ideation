@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "path";
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 
 const edition = process.env.VITE_EDITION || "lite";
 const outDir = edition === "full" ? "dist-full" : "dist-lite";
@@ -38,6 +38,20 @@ export default defineConfig({
         } catch (e) {
           console.warn("Could not copy ORT files from transformers:", e);
         }
+
+        // Rollup also emits the .wasm that ORT references via `new URL()` into
+        // assets/. The worker sets `env.backends.onnx.wasm.wasmPaths` to the
+        // extension root, so only the copies above are ever loaded; drop the
+        // dead 21 MB duplicate so the package stays small.
+        try {
+          const assetsDir = resolve(out, "assets");
+          for (const file of readdirSync(assetsDir)) {
+            if (file.startsWith("ort-wasm") && (file.endsWith(".wasm") || file.endsWith(".mjs"))) {
+              rmSync(resolve(assetsDir, file));
+              console.log(`Removed duplicate ${file} from assets/`);
+            }
+          }
+        } catch {}
 
         // CRITICAL: Patch CDN URLs to local paths in ALL output JS files.
         // Transformers.js hardcodes a CDN URL for the dynamic import() of the
@@ -103,6 +117,6 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ["onnxruntime-web", "@huggingface/transformers"],
+    include: ["@huggingface/transformers"],
   },
 });

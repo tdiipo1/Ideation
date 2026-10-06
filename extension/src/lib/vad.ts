@@ -8,8 +8,25 @@
 
 const SAMPLE_RATE = 16000;
 const FRAME = 480; // 30ms frames at 16kHz
-const MIN_SEGMENT_SAMPLES = 3 * SAMPLE_RATE; // don't commit segments shorter than this
+const DEFAULT_MIN_SEGMENT_SECS = 3; // don't commit segments shorter than this
+const MAX_MIN_SEGMENT_SECS = 10;
 const HARD_CAP_SAMPLES = 20 * SAMPLE_RATE; // force a cut beyond this (Whisper's window is 30s)
+
+// Whisper's encoder always processes a full 30 s window, so every segment
+// costs the same no matter how short it is. On a slow device (single-thread
+// WASM) cutting every 3 s makes inference fall behind; the hook raises the
+// minimum segment length when the last inference took longer than the audio
+// it covered, so each encoder pass covers more speech.
+let minSegmentSamples = DEFAULT_MIN_SEGMENT_SECS * SAMPLE_RATE;
+
+export function setMinSegmentSecs(secs: number): void {
+  const clamped = Math.min(MAX_MIN_SEGMENT_SECS, Math.max(DEFAULT_MIN_SEGMENT_SECS, secs));
+  minSegmentSamples = Math.round(clamped * SAMPLE_RATE);
+}
+
+export function resetMinSegmentSecs(): void {
+  minSegmentSamples = DEFAULT_MIN_SEGMENT_SECS * SAMPLE_RATE;
+}
 const SILENCE_SAMPLES = Math.round(0.4 * SAMPLE_RATE); // 400ms of quiet = a pause
 const ABS_FLOOR = 0.004; // absolute RMS floor so true silence always counts as silent
 
@@ -54,6 +71,7 @@ function frameRms(audio: Float32Array, start: number, end: number): number {
  */
 export function findCutPoint(region: Float32Array): CutPoint | null {
   const len = region.length;
+  const MIN_SEGMENT_SAMPLES = minSegmentSamples;
   if (len < MIN_SEGMENT_SAMPLES) return null;
 
   // Establish a noise floor relative to the loudest frame in the region.

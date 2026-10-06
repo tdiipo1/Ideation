@@ -5,12 +5,17 @@ import { DEFAULT_SETTINGS } from "../types";
 
 export function useSettings() {
   const [settings, setSettings] = useState<ExtSettings>(DEFAULT_SETTINGS);
+  // False until the stored settings have been read; callers use it to avoid
+  // acting on the defaults (e.g. loading the default model, then the saved
+  // one right after).
+  const [loaded, setLoaded] = useState(false);
   const pendingRef = useRef<ExtSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
     getSettings().then((s) => {
       setSettings(s);
       pendingRef.current = s;
+      setLoaded(true);
     });
   }, []);
 
@@ -28,5 +33,5 @@ export function useSettings() {
     saveSettings(pendingRef.current);
   }, []);
 
-  return { settings, update, save };
+  return { settings, loaded, update, save };
 }
