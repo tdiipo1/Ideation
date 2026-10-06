@@ -8,8 +8,14 @@ import Settings from "./components/Settings";
 import ModelNudge from "./components/ModelNudge";
 import { useRecording } from "./hooks/useRecording";
 import { useModelStatus } from "./hooks/useModelStatus";
+import { useT } from "./i18n";
 
 type Tab = "record" | "history" | "settings";
+const TAB_KEYS: Record<Tab, string> = {
+  record: "tabRecord",
+  history: "tabHistory",
+  settings: "tabSettings",
+};
 
 function App() {
   const {
@@ -24,6 +30,7 @@ function App() {
     phase,
   } = useRecording();
   const modelStatus = useModelStatus();
+  const t = useT();
   const [tab, setTab] = useState<Tab>("record");
   const [historyRefresh, setHistoryRefresh] = useState(0);
 
@@ -50,17 +57,17 @@ function App() {
       </header>
 
       <div className="flex gap-1 px-6 mb-4">
-        {(["record", "history", "settings"] as Tab[]).map((t) => (
+        {(["record", "history", "settings"] as Tab[]).map((name) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`text-sm px-3 py-1.5 rounded-md transition-colors capitalize ${
-              tab === t
+            key={name}
+            onClick={() => setTab(name)}
+            className={`text-sm px-3 py-1.5 rounded-md transition-colors ${
+              tab === name
                 ? "bg-neutral-800 text-white"
                 : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/50"
             }`}
           >
-            {t}
+            {t(TAB_KEYS[name])}
           </button>
         ))}
       </div>
@@ -78,7 +85,7 @@ function App() {
               phase={phase}
             />
             {notice && state === "idle" && (
-              <p className="text-xs text-neutral-500 text-center">{notice}</p>
+              <p className="text-xs text-neutral-500 text-center">{t(notice.key, notice.subs)}</p>
             )}
             <TranscriptView
               transcript={transcript}
@@ -103,9 +110,7 @@ function App() {
         )}
       </div>
 
-      <footer className="text-xs text-neutral-600 text-center pb-3">
-        Press the button or use Ctrl+Shift+Space to start/stop recording
-      </footer>
+      <footer className="text-xs text-neutral-600 text-center pb-3">{t("footerHint")}</footer>
     </div>
   );
 }

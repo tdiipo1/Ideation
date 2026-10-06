@@ -1,4 +1,5 @@
 import type { RecordingState } from "../types";
+import { t } from "../lib/i18n";
 
 interface MicButtonProps {
   state: RecordingState;
@@ -27,6 +28,16 @@ export default function MicButton({
   const colors = accents[accent];
   const isRecording = state === "recording";
   const isProcessing = state === "processing";
+
+  const label = isRecording
+    ? t("micRecording")
+    : isProcessing
+      ? backlogSecs > 1
+        ? t("micTranscribingLeft", [Math.round(backlogSecs)])
+        : t("micTranscribing")
+      : disabled
+        ? t("micWaitingModel")
+        : t("micClickToRecord");
 
   return (
     <div className="flex flex-col items-center gap-3 py-4">
@@ -71,17 +82,7 @@ export default function MicButton({
         )}
       </button>
       </div>
-      <p className="text-xs text-neutral-500">
-        {isRecording
-          ? "Recording... Click to stop"
-          : isProcessing
-            ? backlogSecs > 1
-              ? `Transcribing… ${Math.round(backlogSecs)} s left`
-              : "Transcribing..."
-            : disabled
-              ? "Waiting for model..."
-              : "Click to record"}
-      </p>
+      <p className="text-xs text-neutral-500">{label}</p>
     </div>
   );
 }

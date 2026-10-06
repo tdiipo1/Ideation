@@ -21,8 +21,9 @@ export function useRecording() {
   const [transcript, setTranscript] = useState<TranscriptResult | null>(null);
   // Smoothed mic input level (0..1) for the live meter.
   const [audioLevel, setAudioLevel] = useState(0);
-  // One-shot user-facing notice, e.g. "No speech detected".
-  const [notice, setNotice] = useState<string | null>(null);
+  // One-shot user-facing notice as an i18n key + substitutions, e.g.
+  // { key: "noticeNoSpeech" }; translated where it is rendered.
+  const [notice, setNotice] = useState<{ key: string; subs?: string[] } | null>(null);
   // Language the backend detected/locked for the current or last recording.
   const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
   // Seconds of captured audio the backend hasn't transcribed yet.
@@ -58,7 +59,7 @@ export function useRecording() {
     });
 
     const unlistenNoSpeech = listen("no-speech", () => {
-      setNotice("No speech detected");
+      setNotice({ key: "noticeNoSpeech" });
     });
 
     const unlistenLanguage = listen<{ code: string; name: string }>(
@@ -69,9 +70,12 @@ export function useRecording() {
     );
 
     // Informational messages from the backend (e.g. a pinned language the
-    // current model can't honour).
-    const unlistenNotice = listen<string>("notice", (event) => {
-      setNotice(event.payload);
+    // current model can't honour), as codes mapped to localized strings.
+    const unlistenNotice = listen<{ code: string; detail?: string }>("notice", (event) => {
+      setNotice({
+        key: `notice.${event.payload.code}`,
+        subs: event.payload.detail ? [event.payload.detail] : [],
+      });
     });
 
     const unlistenStatus = listen<{ transcribing: boolean; backlog_secs: number; phase?: string }>(
@@ -87,7 +91,7 @@ export function useRecording() {
     const unlistenError = listen<{ code: string; message: string }>(
       "transcribe-error",
       (event) => {
-        setNotice(event.payload.message);
+        setNotice({ key: `error.${event.payload.code}`, subs: [event.payload.message] });
       },
     );
 

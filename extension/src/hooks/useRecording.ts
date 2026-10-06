@@ -12,6 +12,7 @@ import {
 import { joinWithDedup, isHallucination } from "../lib/transcript";
 import type { RecordingState } from "../types";
 import type { Transcriber } from "./useWhisper";
+import { t } from "../lib/i18n";
 
 export interface RecordingResult {
   text: string;
@@ -216,7 +217,7 @@ export function useRecording(
       if (!finalText) {
         // Nothing intelligible — don't clobber the user's clipboard or
         // pollute history with an empty entry.
-        if (mountedRef.current) setNotice("No speech detected");
+        if (mountedRef.current) setNotice(t("noticeNoSpeech"));
         return null;
       }
       return { text: finalText, durationSecs, language };

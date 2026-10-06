@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Ideation Lite",
+  "name": "__MSG_extNameLite__",
+  "default_locale": "en",
   "version": "0.2.0",
   "minimum_chrome_version": "114",
-  "description": "Quick voice-to-text: record, transcribe, copy. Powered by local Whisper AI.",
+  "description": "__MSG_extDescLite__",
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",
@@ -48,14 +49,14 @@
         "default": "Alt+I",
         "mac": "MacCtrl+I"
       },
-      "description": "Open Ideation Lite"
+      "description": "__MSG_cmdOpenLite__"
     },
     "toggle-recording": {
       "suggested_key": {
         "default": "Alt+R",
         "mac": "MacCtrl+R"
       },
-      "description": "Start/stop recording"
+      "description": "__MSG_cmdToggle__"
     }
   },
   "content_security_policy": {

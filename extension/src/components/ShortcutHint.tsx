@@ -1,3 +1,5 @@
+import { t } from "../lib/i18n";
+
 // Detects whether the user is on macOS so we can render the appropriate
 // keyboard shortcut. The manifest binds Alt+I (Win/Linux) and MacCtrl+I (Mac).
 function isMac(): boolean {
@@ -32,9 +34,7 @@ export default function ShortcutHint({ variant = "compact", className = "" }: Sh
     return (
       <span className={`inline-flex items-center gap-1 ${className}`}>
         {icon}
-        <span>
-          {keys} open · {recordKeys} record
-        </span>
+        <span>{t("shortcutVerbose", [keys, recordKeys])}</span>
       </span>
     );
   }

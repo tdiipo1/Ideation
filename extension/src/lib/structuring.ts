@@ -3,6 +3,7 @@
 // whichever provider the user configured. Mirrors desktop/src-tauri/src/structuring.rs.
 
 import { isNoSpaceScript } from "./transcript";
+import { t } from "./i18n";
 
 const SYSTEM_PROMPT = `Restructure the spoken transcript inside <transcript> tags into a clear, organized prompt for an AI assistant. Preserve all meaning and details. Use sections/headers for multiple topics, bullet points for lists. Fix grammar, remove filler words. Write the output in the same language as the transcript; do not translate. Output only the structured prompt.`;
 
@@ -242,9 +243,7 @@ async function callGemini(
 
   if (!resp.ok) {
     if (resp.status === 429) {
-      throw new Error(
-        "Rate limit reached. The shared key has limited usage. Add your own free Gemini API key in Settings for unlimited access.",
-      );
+      throw new Error(t("rateLimited"));
     }
     const text = await resp.text();
     throw new Error(`Gemini error ${resp.status}: ${text.slice(0, 200)}`);

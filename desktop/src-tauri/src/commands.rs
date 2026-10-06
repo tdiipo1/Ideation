@@ -197,10 +197,7 @@ fn spawn_streaming_worker(
             }
         };
         if !session.is_multilingual() && language_setting != "auto" && language_setting != "en" {
-            let _ = app.emit(
-                "notice",
-                "The selected language needs a multilingual model — transcribing as English.",
-            );
+            let _ = app.emit("notice", serde_json::json!({ "code": "needs-multilingual" }));
         }
         let mut vad = audio::Vad::load(&model_manager::vad_model_path());
 
@@ -619,7 +616,10 @@ async fn finish_recording(
             Ok(Ok(None)) => {}
             Ok(Err(e)) => {
                 eprintln!("Smart correction skipped: {}", e);
-                let _ = app.emit("notice", format!("Smart correction skipped: {}", e));
+                let _ = app.emit(
+                    "notice",
+                    serde_json::json!({ "code": "smart-correction-skipped", "detail": e }),
+                );
             }
             Err(_) => eprintln!("Smart correction timed out"),
         }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { languageName } from "../lib/languages";
 import { isNoSpaceScript } from "../lib/transcript";
+import { t } from "../lib/i18n";
 
 interface TranscriptBoxProps {
   text: string | null;
@@ -32,7 +33,7 @@ function LanguageChip({ code }: { code: string | null | undefined }) {
   return (
     <span
       className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 whitespace-nowrap"
-      title="Detected language"
+      title={t("detectedLanguage")}
     >
       {name}
     </span>
@@ -197,11 +198,11 @@ export default function TranscriptBox({
           ) : isRecording ? (
             <div className="h-full flex flex-col items-center justify-center gap-2">
               <LevelBars level={audioLevel} accent={accent} />
-              <p className="text-neutral-400 text-xs">Listening…</p>
+              <p className="text-neutral-400 text-xs">{t("listening")}</p>
             </div>
           ) : (
             <p className="text-neutral-500 text-xs animate-pulse">
-              {behind > 1 ? `Transcribing… ${behind} s left` : "Transcribing…"}
+              {behind > 1 ? t("transcribingLeft", [behind]) : t("transcribing")}
             </p>
           )}
         </div>
@@ -211,12 +212,12 @@ export default function TranscriptBox({
               <>
                 <LevelBars level={audioLevel} accent={accent} />
                 <span className="text-[10px] text-neutral-500">
-                  {behind > 2 ? `Transcribing… (${behind} s behind)` : "Listening…"}
+                  {behind > 2 ? t("transcribingBehind", [behind]) : t("listening")}
                 </span>
               </>
             ) : (
               <span className="text-[10px] text-neutral-500 animate-pulse">
-                {behind > 1 ? `Finishing up… (${behind} s left)` : "Finishing up…"}
+                {behind > 1 ? t("finishingUpLeft", [behind]) : t("finishingUp")}
               </span>
             )}
             <span className="ml-auto">
@@ -232,7 +233,7 @@ export default function TranscriptBox({
   if (!text) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <p className="text-neutral-600 text-xs">Your transcript will appear here</p>
+        <p className="text-neutral-600 text-xs">{t("transcriptPlaceholder")}</p>
       </div>
     );
   }
@@ -282,13 +283,13 @@ export default function TranscriptBox({
                 onClick={() => setViewMode("healed")}
                 className={`text-[10px] px-2 py-0.5 rounded transition-colors ${viewMode === "healed" ? "bg-neutral-700 text-white" : "bg-neutral-800 hover:bg-neutral-700 text-neutral-400"}`}
               >
-                Healed
+                {t("tabHealed")}
               </button>
               <button
                 onClick={() => setViewMode("raw")}
                 className={`text-[10px] px-2 py-0.5 rounded transition-colors ${viewMode === "raw" ? "bg-neutral-700 text-white" : "bg-neutral-800 hover:bg-neutral-700 text-neutral-400"}`}
               >
-                Raw
+                {t("tabRaw")}
               </button>
             </>
           )}
@@ -297,19 +298,19 @@ export default function TranscriptBox({
               onClick={() => setViewMode("structured")}
               className={`text-[10px] px-2 py-0.5 rounded transition-colors ${viewMode === "structured" ? "bg-purple-700 text-white" : "bg-neutral-800 hover:bg-neutral-700 text-neutral-400"}`}
             >
-              Prompt
+              {t("tabPrompt")}
             </button>
           )}
           <LanguageChip code={detectedLanguage} />
           {correcting && (
-            <span className="text-[10px] text-purple-300 animate-pulse">Polishing with AI…</span>
+            <span className="text-[10px] text-purple-300 animate-pulse">{t("polishing")}</span>
           )}
         </div>
         <div className="flex gap-1">
           {onInsert && (
             <button
               onClick={handleInsert}
-              title="Type the transcript into the focused text field on the current page"
+              title={t("insertTitle")}
               className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
                 insertState === "ok"
                   ? "bg-green-600"
@@ -319,10 +320,10 @@ export default function TranscriptBox({
               }`}
             >
               {insertState === "ok"
-                ? "Inserted!"
+                ? t("inserted")
                 : insertState === "fail"
-                  ? "No field focused"
-                  : "Insert"}
+                  ? t("noFieldFocused")
+                  : t("insert")}
             </button>
           )}
           <button
@@ -331,14 +332,14 @@ export default function TranscriptBox({
               copied || autoCopied ? "bg-green-600" : copyColor
             }`}
           >
-            {copied || autoCopied ? "Copied!" : "Copy"}
+            {copied || autoCopied ? t("copied") : t("copy")}
           </button>
         </div>
       </div>
 
       <div className="flex-1 bg-neutral-900 rounded-lg p-3 overflow-y-auto border border-neutral-800 max-h-64">
         {isStructuring ? (
-          <p className="text-neutral-500 text-xs animate-pulse">Structuring as prompt...</p>
+          <p className="text-neutral-500 text-xs animate-pulse">{t("structuring")}</p>
         ) : (
           <p className="text-xs leading-relaxed whitespace-pre-wrap">{displayText}</p>
         )}
@@ -349,7 +350,7 @@ export default function TranscriptBox({
           onClick={onStructure}
           className={`text-[10px] px-3 py-1.5 ${structureColor} rounded transition-colors self-start`}
         >
-          Structure as Prompt
+          {t("structureAsPrompt")}
         </button>
       )}
 

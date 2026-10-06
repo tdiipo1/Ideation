@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { languageName, uiLanguage } from "../lib/languages";
+import { useT } from "../i18n";
 
 // One-time banner suggesting a better-fitting speech model:
 // - system language isn't English but the selected model is English-only
@@ -34,6 +35,7 @@ export default function ModelNudge() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [hidden, setHidden] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     Promise.all([
@@ -56,27 +58,17 @@ export default function ModelNudge() {
   const current = models.find((m) => m.filename === settings.whisper_model);
   if (!current) return null;
 
-  let message: React.ReactNode = null;
+  let message: string | null = null;
   let options: ModelInfo[] = [];
   if (ui !== "en" && current.english_only) {
-    message = (
-      <>
-        Your system language is <b>{languageName(ui)}</b>, but the current speech model only
-        understands English. Download a multilingual model?
-      </>
-    );
+    message = t("nudgeMultilingual", [languageName(ui) ?? ui]);
     options = models.filter((m) => m.name === "base" || m.name === "large-v3-turbo");
   } else if (
     ui === "en" &&
     current.name === "base.en" &&
     (navigator.hardwareConcurrency || 0) >= CAPABLE_LOGICAL_CORES
   ) {
-    message = (
-      <>
-        This machine can comfortably run the <b>Small (English)</b> model, which is noticeably
-        more accurate than Base. Download it?
-      </>
-    );
+    message = t("nudgeSmallEn");
     options = models.filter((m) => m.name === "small.en");
   }
   if (!message || options.length === 0) return null;
@@ -115,7 +107,7 @@ export default function ModelNudge() {
           <div className="w-full h-2 bg-neutral-700 rounded-full overflow-hidden">
             <div className="h-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
           </div>
-          <span className="text-xs text-neutral-500 mt-1">Downloading… {progress}%</span>
+          <span className="text-xs text-neutral-500 mt-1">{t("downloadingPct", [progress])}</span>
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
@@ -125,14 +117,14 @@ export default function ModelNudge() {
               onClick={() => choose(m)}
               className="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-md transition-colors"
             >
-              {m.label} ({m.size_mb} MB)
+              {t(`model.${m.name}`) === `model.${m.name}` ? m.label : t(`model.${m.name}`)} ({m.size_mb} MB)
             </button>
           ))}
           <button
             onClick={dismiss}
             className="text-xs px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-md transition-colors"
           >
-            Not now
+            {t("notNow")}
           </button>
         </div>
       )}

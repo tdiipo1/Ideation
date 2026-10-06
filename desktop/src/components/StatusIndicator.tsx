@@ -1,4 +1,5 @@
 import type { ModelStatus } from "../hooks/useModelStatus";
+import { useT } from "../i18n";
 
 interface StatusIndicatorProps {
   state: "idle" | "recording" | "processing";
@@ -18,6 +19,7 @@ export default function StatusIndicator({
   backlogSecs = 0,
   phase = "idle",
 }: StatusIndicatorProps) {
+  const t = useT();
   const isRecording = state === "recording";
   const isProcessing = state === "processing";
   const modelLoading = modelStatus?.state === "loading";
@@ -85,26 +87,26 @@ export default function StatusIndicator({
 
       <p className="text-sm font-medium">
         {isRecording
-          ? "Recording... Click or press shortcut to stop"
+          ? t("statusRecording")
           : isProcessing
             ? phase === "polishing"
-              ? "Polishing with AI…"
+              ? t("polishing")
               : behind > 1
-                ? `Finishing up… ${behind} s left`
-                : "Processing audio..."
+                ? t("finishingUpLeft", [behind])
+                : t("processing")
             : modelLoading
-              ? "Loading speech model…"
-              : "Click or press Ctrl+Shift+Space to record"}
+              ? t("modelLoading")
+              : t("statusIdle")}
       </p>
       {modelProblem && !isRecording && !isProcessing && (
         <p className="text-xs text-amber-400 text-center">
           {modelStatus?.state === "missing"
-            ? "Speech model not downloaded — pick one in Settings."
-            : `Model failed to load: ${modelStatus?.message ?? "unknown error"}`}
+            ? t("modelMissing")
+            : t("modelFailed", [modelStatus?.message ?? t("unknownError")])}
         </p>
       )}
       {modelStatus?.state === "ready" && modelStatus.gpu && state === "idle" && (
-        <p className="text-[10px] text-neutral-600">GPU acceleration active</p>
+        <p className="text-[10px] text-neutral-600">{t("gpuActive")}</p>
       )}
     </div>
   );

@@ -8,6 +8,9 @@
 export interface WhisperModel {
   id: string;
   label: string;
+  /** i18n keys for the label and note (see public/_locales). */
+  labelKey: string;
+  noteKey: string;
   /** Approximate one-time download, WASM / WebGPU. */
   sizeNote: string;
   note: string;
@@ -27,6 +30,8 @@ export const WHISPER_MODELS: readonly WhisperModel[] = [
   {
     id: TINY_EN,
     label: "Tiny (English)",
+    labelKey: "modelTinyEn",
+    noteKey: "modelNoteTinyEn",
     sizeNote: "40–120 MB",
     note: "Fastest. Default on CPU-only machines.",
     multilingual: false,
@@ -35,6 +40,8 @@ export const WHISPER_MODELS: readonly WhisperModel[] = [
   {
     id: BASE_EN,
     label: "Base (English)",
+    labelKey: "modelBaseEn",
+    noteKey: "modelNoteBaseEn",
     sizeNote: "80–210 MB",
     note: "More accurate; comfortable with GPU acceleration.",
     multilingual: false,
@@ -43,6 +50,8 @@ export const WHISPER_MODELS: readonly WhisperModel[] = [
   {
     id: SMALL_EN,
     label: "Small (English)",
+    labelKey: "modelSmallEn",
+    noteKey: "modelNoteSmallEn",
     sizeNote: "250–590 MB",
     note: "Best English accuracy. Needs GPU acceleration.",
     multilingual: false,
@@ -52,6 +61,8 @@ export const WHISPER_MODELS: readonly WhisperModel[] = [
   {
     id: BASE_MULTI,
     label: "Base (Multilingual)",
+    labelKey: "modelBaseMulti",
+    noteKey: "modelNoteBaseMulti",
     sizeNote: "80–210 MB",
     note: "99 languages. Default when the browser isn't in English.",
     multilingual: true,
@@ -60,6 +71,8 @@ export const WHISPER_MODELS: readonly WhisperModel[] = [
   {
     id: SMALL_MULTI,
     label: "Small (Multilingual)",
+    labelKey: "modelSmallMulti",
+    noteKey: "modelNoteSmallMulti",
     sizeNote: "250–590 MB",
     note: "Much better for Spanish, Chinese, Portuguese… Needs GPU acceleration.",
     multilingual: true,

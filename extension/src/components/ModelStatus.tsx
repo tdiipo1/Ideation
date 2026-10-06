@@ -1,4 +1,5 @@
 import type { ModelState } from "../types";
+import { t } from "../lib/i18n";
 
 interface ModelProgress {
   status?: string;
@@ -49,8 +50,8 @@ export default function ModelStatus({ state, progress, error, accent = "blue" }:
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-xs text-neutral-400">
               {progress.status === "download" || progress.status === "progress"
-                ? "Downloading model..."
-                : "Loading model..."}
+                ? t("modelDownloading")
+                : t("modelLoading")}
             </span>
             {hasPercent && (
               <span className="text-xs text-neutral-500 tabular-nums">
@@ -95,20 +96,15 @@ export default function ModelStatus({ state, progress, error, accent = "blue" }:
           )}
 
           {!hasBytes && !hasPercent && (
-            <p className="text-[10px] text-neutral-600 mt-1.5">
-              First-time model downloads from HuggingFace can take a few minutes.
-              The model is cached after this.
-            </p>
+            <p className="text-[10px] text-neutral-600 mt-1.5">{t("modelFirstDownloadHint")}</p>
           )}
         </div>
       )}
       {state === "not-loaded" && (
-        <p className="text-xs text-neutral-500">Initializing model...</p>
+        <p className="text-xs text-neutral-500">{t("modelInitializing")}</p>
       )}
       {state === "error" && (
-        <p className="text-xs text-red-400">
-          Model failed to load: {error || "Unknown error"}
-        </p>
+        <p className="text-xs text-red-400">{t("modelFailed", [error || t("unknownError")])}</p>
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { useT } from "../i18n";
 
 interface HistoryEntry {
   id: string;
@@ -18,6 +19,7 @@ export default function HistoryView({ refreshTrigger }: HistoryViewProps) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
+  const t = useT();
 
   const loadHistory = useCallback(async () => {
     const data = await invoke<HistoryEntry[]>("get_history", {
@@ -50,7 +52,7 @@ export default function HistoryView({ refreshTrigger }: HistoryViewProps) {
   if (entries.length === 0) {
     return (
       <div className="flex items-center justify-center py-8">
-        <p className="text-neutral-500 text-sm">No transcripts yet</p>
+        <p className="text-neutral-500 text-sm">{t("historyEmpty")}</p>
       </div>
     );
   }
@@ -59,20 +61,20 @@ export default function HistoryView({ refreshTrigger }: HistoryViewProps) {
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-sm font-semibold text-neutral-400">
-          History ({entries.length})
+          {t("historyTitle", [entries.length])}
         </h2>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowRaw(!showRaw)}
             className="text-xs px-2 py-1 bg-neutral-800 hover:bg-neutral-700 rounded transition-colors"
           >
-            {showRaw ? "Healed" : "Raw"}
+            {showRaw ? t("tabHealed") : t("tabRaw")}
           </button>
           <button
             onClick={handleClear}
             className="text-xs px-2 py-1 text-red-400 hover:text-red-300 hover:bg-neutral-800 rounded transition-colors"
           >
-            Clear All
+            {t("clearAll")}
           </button>
         </div>
       </div>
@@ -128,13 +130,13 @@ export default function HistoryView({ refreshTrigger }: HistoryViewProps) {
                     onClick={() => handleCopy(entry)}
                     className="text-xs px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
                   >
-                    Copy
+                    {t("copy")}
                   </button>
                   <button
                     onClick={() => handleDelete(entry.id)}
                     className="text-xs px-3 py-1 text-red-400 hover:text-red-300 hover:bg-neutral-800 rounded transition-colors"
                   >
-                    Delete
+                    {t("delete")}
                   </button>
                 </div>
               </div>

@@ -4,6 +4,7 @@ import { fetchGeminiModels, GeminiModel } from "../lib/structuring";
 import { SHARED_GEMINI_KEY } from "../types";
 import { WHISPER_MODELS, BASE_MULTI, isMultilingualModel } from "../lib/models";
 import { LANGUAGES, languageName } from "../lib/languages";
+import { t } from "../lib/i18n";
 
 interface SettingsPanelProps {
   settings: ExtSettings;
@@ -58,7 +59,7 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
     <div className="flex flex-col gap-4">
       {/* Language */}
       <section>
-        <h3 className="text-xs font-semibold text-neutral-400 mb-2">Language</h3>
+        <h3 className="text-xs font-semibold text-neutral-400 mb-2">{t("settingsLanguage")}</h3>
         <select
           value={settings.language}
           onChange={(e) => onUpdate({ language: e.target.value })}
@@ -70,31 +71,28 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
             </option>
           ))}
         </select>
-        <p className="text-[10px] text-neutral-600 mt-1">
-          Auto-detect reads the language from the first seconds of each recording, then keeps it
-          for the rest of it.
-        </p>
+        <p className="text-[10px] text-neutral-600 mt-1">{t("languageAutoHint")}</p>
         {pinnedNonEnglish && !modelIsMultilingual && (
           <div className="mt-2 text-[10px] text-amber-400 bg-amber-400/10 px-2 py-1.5 rounded flex items-center justify-between gap-2">
-            <span>{languageName(settings.language)} needs a multilingual model.</span>
+            <span>
+              {t("languageNeedsMultilingual", [languageName(settings.language) ?? settings.language])}
+            </span>
             <button
               onClick={() => onUpdate({ modelId: BASE_MULTI })}
               className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 rounded whitespace-nowrap"
             >
-              Use Base (Multilingual)
+              {t("useBaseMultilingual")}
             </button>
           </div>
         )}
         {!pinnedNonEnglish && !modelIsMultilingual && (
-          <p className="text-[10px] text-neutral-600 mt-1">
-            The selected model is English-only; other languages won't be recognized.
-          </p>
+          <p className="text-[10px] text-neutral-600 mt-1">{t("modelEnglishOnlyHint")}</p>
         )}
       </section>
 
       {/* Whisper Model */}
       <section>
-        <h3 className="text-xs font-semibold text-neutral-400 mb-2">Whisper Model</h3>
+        <h3 className="text-xs font-semibold text-neutral-400 mb-2">{t("settingsWhisperModel")}</h3>
         {WHISPER_MODELS.map((m) => (
           <label
             key={m.id}
@@ -112,26 +110,24 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
             />
             <div className="flex flex-col flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-xs">{m.label}</span>
+                <span className="text-xs">{t(m.labelKey)}</span>
                 <span className="text-[10px] text-neutral-500">{m.sizeNote}</span>
                 {m.gpuRecommended && (
                   <span className="text-[9px] px-1 py-px rounded bg-neutral-800 text-neutral-400">
-                    GPU
+                    {t("gpuTag")}
                   </span>
                 )}
               </div>
-              <span className="text-[10px] text-neutral-600">{m.note}</span>
+              <span className="text-[10px] text-neutral-600">{t(m.noteKey)}</span>
             </div>
           </label>
         ))}
-        <p className="text-[10px] text-neutral-600 mt-1">
-          Changing model triggers a one-time download on first use, then caches locally.
-        </p>
+        <p className="text-[10px] text-neutral-600 mt-1">{t("modelChangeHint")}</p>
       </section>
 
       {/* Behavior */}
       <section>
-        <h3 className="text-xs font-semibold text-neutral-400 mb-2">Behavior</h3>
+        <h3 className="text-xs font-semibold text-neutral-400 mb-2">{t("settingsBehavior")}</h3>
         <label className="flex items-center gap-2 cursor-pointer">
           <div
             onClick={() => onUpdate({ healingEnabled: !settings.healingEnabled })}
@@ -146,8 +142,8 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
             />
           </div>
           <div>
-            <span className="text-xs">Transcript healing</span>
-            <p className="text-[10px] text-neutral-500">Remove filler words, fix capitalization</p>
+            <span className="text-xs">{t("healingLabel")}</span>
+            <p className="text-[10px] text-neutral-500">{t("healingHint")}</p>
           </div>
         </label>
         <label className="flex items-center gap-2 cursor-pointer mt-2">
@@ -164,20 +160,16 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
             />
           </div>
           <div>
-            <span className="text-xs">Insert into page</span>
-            <p className="text-[10px] text-neutral-500">
-              Type the transcript into the focused text field automatically (also copied)
-            </p>
+            <span className="text-xs">{t("insertLabel")}</span>
+            <p className="text-[10px] text-neutral-500">{t("insertHint")}</p>
           </div>
         </label>
       </section>
 
       {/* Prompt Structuring */}
       <section>
-        <h3 className="text-xs font-semibold text-neutral-400 mb-2">Prompt Structuring</h3>
-        <p className="text-[10px] text-neutral-500 mb-2">
-          Restructure transcripts into clean prompts using an AI provider.
-        </p>
+        <h3 className="text-xs font-semibold text-neutral-400 mb-2">{t("settingsStructuring")}</h3>
+        <p className="text-[10px] text-neutral-500 mb-2">{t("structuringHint")}</p>
         <div className="flex flex-col gap-2">
           {/* Provider */}
           <select
@@ -186,17 +178,15 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
             className="text-xs px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded focus:outline-none focus:border-blue-500"
           >
             <option value="gemini">Google Gemini</option>
-            <option value="openai">OpenAI (paid)</option>
-            <option value="anthropic">Anthropic (paid)</option>
+            <option value="openai">OpenAI ({t("paid")})</option>
+            <option value="anthropic">Anthropic ({t("paid")})</option>
             <option value="groq">Groq</option>
           </select>
 
           {/* Paid provider warning */}
           {(settings.llmProvider === "openai" || settings.llmProvider === "anthropic") && (
             <p className="text-[10px] text-amber-400 bg-amber-400/10 px-2 py-1.5 rounded">
-              This provider charges per API call. Costs are billed by{" "}
-              {settings.llmProvider === "openai" ? "OpenAI" : "Anthropic"} to your
-              account. Check their pricing page for current rates.
+              {t("providerPaidWarning", [settings.llmProvider === "openai" ? "OpenAI" : "Anthropic"])}
             </p>
           )}
 
@@ -211,10 +201,8 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
                   className="accent-blue-500"
                 />
                 <div>
-                  <span className="text-xs">Ideation Shared Key (limited)</span>
-                  <p className="text-[10px] text-neutral-500">
-                    Free, shared across all users. Rate limited — may be slow during peak usage.
-                  </p>
+                  <span className="text-xs">{t("sharedKeyLabel")}</span>
+                  <p className="text-[10px] text-neutral-500">{t("sharedKeyHint")}</p>
                 </div>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
@@ -225,10 +213,8 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
                   className="accent-blue-500"
                 />
                 <div>
-                  <span className="text-xs">My own API key (unlimited)</span>
-                  <p className="text-[10px] text-neutral-500">
-                    Get a free key at aistudio.google.com. Higher limits, no sharing.
-                  </p>
+                  <span className="text-xs">{t("ownKeyLabel")}</span>
+                  <p className="text-[10px] text-neutral-500">{t("ownKeyHint")}</p>
                 </div>
               </label>
             </div>
@@ -240,7 +226,7 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
               type="password"
               value={settings.llmApiKey}
               onChange={(e) => onUpdate({ llmApiKey: e.target.value })}
-              placeholder="Paste your API key here"
+              placeholder={t("apiKeyPlaceholder")}
               className="text-xs px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded focus:outline-none focus:border-blue-500"
             />
           )}
@@ -248,7 +234,7 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
           {/* Model picker (Gemini) */}
           {settings.llmProvider === "gemini" && (
             <div>
-              <label className="text-[10px] text-neutral-400 mb-1 block">Model</label>
+              <label className="text-[10px] text-neutral-400 mb-1 block">{t("modelLabel")}</label>
               {settings.llmKeyMode === "shared" ? (
                 // Shared key: only show confirmed free-tier models
                 <select
@@ -259,7 +245,7 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
                   <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                 </select>
               ) : loadingModels ? (
-                <p className="text-[10px] text-neutral-500">Loading models...</p>
+                <p className="text-[10px] text-neutral-500">{t("loadingModels")}</p>
               ) : geminiModels.length > 0 ? (
                 <select
                   value={settings.llmModel || "gemini-2.5-flash"}
@@ -282,9 +268,7 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
                 />
               )}
               {settings.llmKeyMode === "shared" && (
-                <p className="text-[10px] text-neutral-600 mt-1">
-                  Use your own key to access all available models.
-                </p>
+                <p className="text-[10px] text-neutral-600 mt-1">{t("ownKeyModelsHint")}</p>
               )}
             </div>
           )}
@@ -304,11 +288,8 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
               />
             </div>
             <div>
-              <span className="text-xs">Smart correction</span>
-              <p className="text-[10px] text-neutral-500">
-                After each recording, fix misheard words from sentence context. Sends the
-                transcript text to the provider above (Gemini shared key by default).
-              </p>
+              <span className="text-xs">{t("smartCorrectionLabel")}</span>
+              <p className="text-[10px] text-neutral-500">{t("smartCorrectionHint")}</p>
             </div>
           </label>
 
@@ -340,7 +321,7 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
             : "bg-blue-600 hover:bg-blue-500 text-white"
         }`}
       >
-        {saved ? "Settings Saved!" : "Save Settings"}
+        {saved ? t("settingsSaved") : t("saveSettings")}
       </button>
     </div>
   );

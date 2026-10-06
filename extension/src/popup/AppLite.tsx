@@ -9,6 +9,7 @@ import TranscriptBox from "../components/TranscriptBox";
 import ShortcutHint from "../components/ShortcutHint";
 import { defaultModelFor } from "../lib/models";
 import { uiLanguage } from "../lib/languages";
+import { t } from "../lib/i18n";
 
 // Lite has no settings: the model follows the browser language (tiny.en for
 // English, Base multilingual otherwise) and the spoken language is detected.
@@ -80,14 +81,12 @@ export default function AppLite() {
 
       {micError === "mic-blocked" && (
         <div className="bg-neutral-900 rounded-lg p-3 border border-orange-800">
-          <p className="text-xs text-orange-400 mb-2">
-            Microphone access was blocked. Chrome doesn't show permission prompts in extension popups.
-          </p>
+          <p className="text-xs text-orange-400 mb-2">{t("micBlockedLite")}</p>
           <button
             onClick={openInTab}
             className="text-xs px-3 py-1.5 bg-orange-600 hover:bg-orange-500 rounded transition-colors"
           >
-            Open in full tab to grant mic access
+            {t("openInTab")}
           </button>
         </div>
       )}

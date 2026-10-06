@@ -19,6 +19,7 @@ import {
   multilingualUpgradeFor,
 } from "../lib/models";
 import { languageName, uiLanguage } from "../lib/languages";
+import { t } from "../lib/i18n";
 import ModelStatus from "../components/ModelStatus";
 import MicButton from "../components/MicButton";
 import TranscriptBox from "../components/TranscriptBox";
@@ -27,6 +28,11 @@ import SettingsPanel from "../components/SettingsPanel";
 import ShortcutHint from "../components/ShortcutHint";
 
 type Tab = "record" | "history" | "settings";
+const TAB_KEYS: Record<Tab, string> = {
+  record: "tabRecord",
+  history: "tabHistory",
+  settings: "tabSettings",
+};
 
 export default function AppFull() {
   const { settings, loaded: settingsLoaded, update: updateSettings, save: saveSettingsDraft } =
@@ -207,7 +213,7 @@ export default function AppFull() {
 
     const apiKey = resolveApiKey();
     if (!apiKey) {
-      setStructureError("No API key configured. Go to Settings to add one.");
+      setStructureError(t("noApiKey"));
       return;
     }
 
@@ -238,17 +244,17 @@ export default function AppFull() {
       </header>
 
       <div className="flex gap-1">
-        {(["record", "history", "settings"] as Tab[]).map((t) => (
+        {(["record", "history", "settings"] as Tab[]).map((name) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`text-xs px-2.5 py-1 rounded transition-colors capitalize ${
-              tab === t
+            key={name}
+            onClick={() => setTab(name)}
+            className={`text-xs px-2.5 py-1 rounded transition-colors ${
+              tab === name
                 ? "bg-neutral-800 text-white"
                 : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/50"
             }`}
           >
-            {t}
+            {t(TAB_KEYS[name])}
           </button>
         ))}
       </div>
@@ -259,14 +265,12 @@ export default function AppFull() {
 
           {micError === "mic-blocked" && (
             <div className="bg-neutral-900 rounded-lg p-3 border border-blue-800">
-              <p className="text-xs text-blue-400 mb-2">
-                Microphone access was blocked.
-              </p>
+              <p className="text-xs text-blue-400 mb-2">{t("micBlocked")}</p>
               <button
                 onClick={openInTab}
                 className="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
               >
-                Open in full tab to grant mic access
+                {t("openInTab")}
               </button>
             </div>
           )}
@@ -284,22 +288,23 @@ export default function AppFull() {
           {showMultilingualNudge && (
             <div className="bg-neutral-900 rounded-lg p-2.5 border border-blue-900/60 flex flex-col gap-1.5">
               <p className="text-[11px] text-neutral-300">
-                Your browser is set to <b>{languageName(ui)}</b>, but the current model only
-                understands English. Switch to{" "}
-                <b>{findModel(multilingualTarget)?.label ?? "a multilingual model"}</b>?
+                {t("nudgeMultilingual", [
+                  languageName(ui) ?? ui,
+                  t(findModel(multilingualTarget)?.labelKey ?? "modelBaseMulti"),
+                ])}
               </p>
               <div className="flex gap-1.5">
                 <button
                   onClick={() => applyMultilingualNudge(true)}
                   className="text-[10px] px-2.5 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
                 >
-                  Switch
+                  {t("switch")}
                 </button>
                 <button
                   onClick={() => applyMultilingualNudge(false)}
                   className="text-[10px] px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded transition-colors"
                 >
-                  Keep English
+                  {t("keepEnglish")}
                 </button>
               </div>
             </div>
@@ -307,22 +312,20 @@ export default function AppFull() {
           {showModelNudge && gpuUpgradeTarget && (
             <div className="bg-neutral-900 rounded-lg p-2.5 border border-blue-900/60 flex flex-col gap-1.5">
               <p className="text-[11px] text-neutral-300">
-                Your device has GPU acceleration — the{" "}
-                <b>{findModel(gpuUpgradeTarget)?.label ?? "larger"}</b> model is noticeably
-                more accurate and still fast here.
+                {t("nudgeGpu", [t(findModel(gpuUpgradeTarget)?.labelKey ?? "modelBaseEn")])}
               </p>
               <div className="flex gap-1.5">
                 <button
                   onClick={() => applyModelNudge(true)}
                   className="text-[10px] px-2.5 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
                 >
-                  Switch
+                  {t("switch")}
                 </button>
                 <button
                   onClick={() => applyModelNudge(false)}
                   className="text-[10px] px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded transition-colors"
                 >
-                  Keep current
+                  {t("keepCurrent")}
                 </button>
               </div>
             </div>

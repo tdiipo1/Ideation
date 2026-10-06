@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { copyToClipboard } from "../lib/clipboard";
 import type { HistoryEntry } from "../types";
+import { t } from "../lib/i18n";
 
 interface HistoryViewProps {
   entries: HistoryEntry[];
@@ -14,7 +15,7 @@ export default function HistoryView({ entries, onDelete, onClear }: HistoryViewP
   if (entries.length === 0) {
     return (
       <div className="flex items-center justify-center py-8">
-        <p className="text-neutral-600 text-xs">No transcripts yet</p>
+        <p className="text-neutral-600 text-xs">{t("historyEmpty")}</p>
       </div>
     );
   }
@@ -22,12 +23,12 @@ export default function HistoryView({ entries, onDelete, onClear }: HistoryViewP
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-neutral-500">{entries.length} entries</span>
+        <span className="text-xs text-neutral-500">{t("historyEntries", [entries.length])}</span>
         <button
           onClick={onClear}
           className="text-[10px] px-2 py-0.5 text-red-400 hover:bg-neutral-800 rounded"
         >
-          Clear All
+          {t("clearAll")}
         </button>
       </div>
 
@@ -56,13 +57,13 @@ export default function HistoryView({ entries, onDelete, onClear }: HistoryViewP
                     onClick={() => copyToClipboard(entry.healed || entry.raw)}
                     className="text-[10px] px-2 py-0.5 bg-blue-600 hover:bg-blue-500 rounded"
                   >
-                    Copy
+                    {t("copy")}
                   </button>
                   <button
                     onClick={() => onDelete(entry.id)}
                     className="text-[10px] px-2 py-0.5 text-red-400 hover:bg-neutral-800 rounded"
                   >
-                    Delete
+                    {t("delete")}
                   </button>
                 </div>
               </div>

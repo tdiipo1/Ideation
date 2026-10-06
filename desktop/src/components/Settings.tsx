@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { LANGUAGES, languageName } from "../lib/languages";
+import { useT, UI_LANGUAGE_EVENT } from "../i18n";
 
 interface AppSettings {
   shortcut: string;
@@ -29,7 +30,14 @@ interface ModelInfo {
   english_only: boolean;
 }
 
+const UI_LANGUAGES: ReadonlyArray<readonly [code: string, nativeName: string]> = [
+  ["en", "English"],
+  ["es", "Español"],
+  ["zh", "中文"],
+];
+
 export default function Settings() {
+  const t = useT();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [downloaded, setDownloaded] = useState<Record<string, boolean>>({});
@@ -79,6 +87,8 @@ export default function Settings() {
     await invoke("save_settings", { newSettings: settings });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+    // Let the rest of the UI switch language right away.
+    window.dispatchEvent(new CustomEvent(UI_LANGUAGE_EVENT, { detail: settings.ui_language }));
 
     // Eagerly preload the selected model into the WhisperContext cache so
     // the next transcription doesn't pay the disk-read cost on first use.
@@ -132,26 +142,55 @@ export default function Settings() {
     }
   }
 
+  // Model names/descriptions come from the backend in English; use the
+  // localized text when we have it.
+  function modelLabel(model: ModelInfo): string {
+    const key = `model.${model.name}`;
+    const localized = t(key);
+    return localized === key ? model.label : localized;
+  }
+  function modelDescription(model: ModelInfo): string {
+    const key = `modelDesc.${model.name}`;
+    const localized = t(key);
+    return localized === key ? model.description : localized;
+  }
+
   if (!settings) return null;
 
   const currentModel = models.find((m) => m.filename === settings.whisper_model);
   const modelIsEnglishOnly = currentModel ? currentModel.english_only : false;
   const pinnedNonEnglish = settings.language !== "auto" && settings.language !== "en";
   const multilingualFallback = models.find((m) => m.name === "base");
+  const inputClass =
+    "w-full text-sm px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md focus:outline-none focus:border-blue-500";
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Language */}
+      {/* Interface language */}
       <section>
-        <h3 className="text-sm font-semibold text-neutral-400 mb-2">Language</h3>
-        <p className="text-xs text-neutral-500 mb-2">
-          Auto-detect reads the language from the first seconds of each recording, then keeps
-          it for the rest of it. Pin a language if detection ever guesses wrong.
-        </p>
+        <h3 className="text-sm font-semibold text-neutral-400 mb-2">{t("interfaceLanguage")}</h3>
+        <select
+          value={settings.ui_language}
+          onChange={(e) => update({ ui_language: e.target.value })}
+          className={inputClass}
+        >
+          <option value="auto">{t("interfaceLanguageAuto")}</option>
+          {UI_LANGUAGES.map(([code, name]) => (
+            <option key={code} value={code}>
+              {name}
+            </option>
+          ))}
+        </select>
+      </section>
+
+      {/* Spoken language */}
+      <section>
+        <h3 className="text-sm font-semibold text-neutral-400 mb-2">{t("settingsLanguage")}</h3>
+        <p className="text-xs text-neutral-500 mb-2">{t("languageAutoHint")}</p>
         <select
           value={settings.language}
           onChange={(e) => update({ language: e.target.value })}
-          className="w-full text-sm px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md focus:outline-none focus:border-blue-500"
+          className={inputClass}
         >
           {LANGUAGES.map(([code, name]) => (
             <option key={code} value={code}>
@@ -161,46 +200,39 @@ export default function Settings() {
         </select>
         {pinnedNonEnglish && modelIsEnglishOnly && (
           <div className="mt-2 text-xs text-amber-400 bg-amber-400/10 px-3 py-2 rounded-md flex items-center justify-between gap-3">
-            <span>{languageName(settings.language)} needs a multilingual model.</span>
+            <span>
+              {t("languageNeedsMultilingual", [languageName(settings.language) ?? settings.language])}
+            </span>
             {multilingualFallback && (
               <button
                 onClick={() => selectModel(multilingualFallback)}
                 className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 rounded whitespace-nowrap"
               >
-                Use Base (Multilingual)
+                {t("useBaseMultilingual")}
               </button>
             )}
           </div>
         )}
         {!pinnedNonEnglish && modelIsEnglishOnly && (
-          <p className="text-xs text-neutral-600 mt-2">
-            The selected model is English-only; other languages won't be recognized.
-          </p>
+          <p className="text-xs text-neutral-600 mt-2">{t("modelEnglishOnlyHint")}</p>
         )}
       </section>
 
       {/* Shortcut */}
       <section>
-        <h3 className="text-sm font-semibold text-neutral-400 mb-2">
-          Global Shortcut
-        </h3>
-        <p className="text-xs text-neutral-500 mb-2">
-          The keyboard shortcut to start/stop recording from anywhere.
-          Restart the app after changing.
-        </p>
+        <h3 className="text-sm font-semibold text-neutral-400 mb-2">{t("shortcutTitle")}</h3>
+        <p className="text-xs text-neutral-500 mb-2">{t("shortcutHint")}</p>
         <input
           type="text"
           value={settings.shortcut}
           onChange={(e) => update({ shortcut: e.target.value })}
-          className="w-full text-sm px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md focus:outline-none focus:border-blue-500"
+          className={inputClass}
         />
       </section>
 
       {/* Whisper Model */}
       <section>
-        <h3 className="text-sm font-semibold text-neutral-400 mb-2">
-          Whisper Model
-        </h3>
+        <h3 className="text-sm font-semibold text-neutral-400 mb-2">{t("settingsWhisperModel")}</h3>
         <div className="flex flex-col gap-2">
           {models.map((model) => (
             <label
@@ -220,7 +252,7 @@ export default function Settings() {
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">{model.label}</span>
+                  <span className="text-sm font-medium">{modelLabel(model)}</span>
                   <span className="text-xs text-neutral-500">
                     {model.size_mb >= 1024
                       ? `${(model.size_mb / 1024).toFixed(1)} GB`
@@ -228,16 +260,16 @@ export default function Settings() {
                   </span>
                   {!model.english_only && (
                     <span className="text-[10px] px-1 py-px rounded bg-neutral-800 text-neutral-400">
-                      multilingual
+                      {t("multilingualTag")}
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-neutral-600">{model.description}</p>
+                <p className="text-xs text-neutral-600">{modelDescription(model)}</p>
               </div>
               {preloading === model.filename ? (
-                <span className="text-xs text-blue-400 animate-pulse">Preparing...</span>
+                <span className="text-xs text-blue-400 animate-pulse">{t("preparing")}</span>
               ) : downloaded[model.filename] ? (
-                <span className="text-xs text-green-400">Downloaded</span>
+                <span className="text-xs text-green-400">{t("downloaded")}</span>
               ) : settings.whisper_model === model.filename && downloadProgress[model.name] != null ? (
                 <div className="flex items-center gap-2 min-w-[120px]">
                   <div className="flex-1 h-1.5 bg-neutral-700 rounded-full overflow-hidden">
@@ -251,9 +283,9 @@ export default function Settings() {
                   </span>
                 </div>
               ) : settings.whisper_model === model.filename && downloadError ? (
-                <span className="text-xs text-red-400">Failed — click to retry</span>
+                <span className="text-xs text-red-400">{t("downloadFailed")}</span>
               ) : (
-                <span className="text-xs text-neutral-500">Select to download</span>
+                <span className="text-xs text-neutral-500">{t("selectToDownload")}</span>
               )}
             </label>
           ))}
@@ -262,44 +294,42 @@ export default function Settings() {
 
       {/* Toggles */}
       <section>
-        <h3 className="text-sm font-semibold text-neutral-400 mb-3">
-          Behavior
-        </h3>
+        <h3 className="text-sm font-semibold text-neutral-400 mb-3">{t("settingsBehavior")}</h3>
         <div className="flex flex-col gap-3">
           <Toggle
-            label="Transcript healing"
-            description="Clean up filler words, fix capitalization, remove artifacts"
+            label={t("healingLabel")}
+            description={t("healingHint")}
             checked={settings.healing_enabled}
             onChange={(v) => update({ healing_enabled: v })}
           />
           <Toggle
-            label="Smart correction (local AI)"
-            description="After each recording, fix misheard words from sentence context with a local Ollama model (Phi, Gemma, Qwen…). Stays on this machine; requires Ollama."
+            label={t("smartCorrectionLabel")}
+            description={t("smartCorrectionHint")}
             checked={settings.smart_correction}
             onChange={(v) => update({ smart_correction: v })}
           />
           <Toggle
-            label="Auto-copy to clipboard"
-            description="Automatically copy the transcript to clipboard after recording"
+            label={t("autoCopyLabel")}
+            description={t("autoCopyHint")}
             checked={settings.auto_copy}
             onChange={(v) => update({ auto_copy: v })}
           />
           <Toggle
-            label="Auto-paste"
-            description="Automatically paste the transcript into the active window (simulates Ctrl+V)"
+            label={t("autoPasteLabel")}
+            description={t("autoPasteHint")}
             checked={settings.auto_paste}
             onChange={(v) => update({ auto_paste: v })}
           />
           <Toggle
-            label="Sound feedback"
-            description="Play a beep when recording starts and stops"
+            label={t("soundLabel")}
+            description={t("soundHint")}
             checked={settings.sound_feedback}
             onChange={(v) => update({ sound_feedback: v })}
           />
           {gpuBackend !== "none" && (
             <Toggle
-              label={`GPU acceleration (${gpuBackend})`}
-              description="Run Whisper on the graphics card. Falls back to the CPU if the GPU can't load the model. Takes effect on the next model load."
+              label={t("gpuLabel", [gpuBackend])}
+              description={t("gpuHint")}
               checked={settings.use_gpu}
               onChange={(v) => update({ use_gpu: v })}
             />
@@ -309,79 +339,73 @@ export default function Settings() {
 
       {/* Prompt Structuring (LLM) */}
       <section>
-        <h3 className="text-sm font-semibold text-neutral-400 mb-2">
-          Prompt Structuring (LLM)
-        </h3>
-        <p className="text-xs text-neutral-500 mb-3">
-          Restructure your transcript into a clean, organized prompt using an AI
-          provider. Requires an API key.
-        </p>
+        <h3 className="text-sm font-semibold text-neutral-400 mb-2">{t("settingsStructuring")}</h3>
+        <p className="text-xs text-neutral-500 mb-3">{t("structuringHint")}</p>
 
         <div className="flex flex-col gap-3">
           <div>
-            <label className="text-xs text-neutral-400 mb-1 block">
-              Provider
-            </label>
+            <label className="text-xs text-neutral-400 mb-1 block">{t("providerLabel")}</label>
             <select
               value={settings.llm_provider}
               onChange={(e) => update({ llm_provider: e.target.value })}
-              className="w-full text-sm px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md focus:outline-none focus:border-blue-500"
+              className={inputClass}
             >
-              <option value="local">Phi via Ollama (local, free, offline)</option>
-              <option value="gemma4">Gemma via Ollama (local, free, offline)</option>
-              <option value="gemini">Google Gemini (free)</option>
-              <option value="openai">OpenAI (paid)</option>
-              <option value="anthropic">Anthropic (paid)</option>
-              <option value="groq">Groq</option>
+              <option value="local">{t("providerPhi")}</option>
+              <option value="gemma4">{t("providerGemma")}</option>
+              <option value="gemini">{t("providerGemini")}</option>
+              <option value="openai">{t("providerOpenAi")}</option>
+              <option value="anthropic">{t("providerAnthropic")}</option>
+              <option value="groq">{t("providerGroq")}</option>
             </select>
             {(settings.llm_provider === "local" || settings.llm_provider === "gemma4") && (
               <p className="text-xs text-neutral-500 mt-2">
-                Requires <a href="https://ollama.com" target="_blank" className="text-blue-400 underline">Ollama</a> installed and running.
-                Auto-detects your installed models — no extra setup needed.
+                {t("ollamaHintBefore")}{" "}
+                <a href="https://ollama.com" target="_blank" className="text-blue-400 underline">
+                  Ollama
+                </a>{" "}
+                {t("ollamaHintAfter")}
               </p>
             )}
             {(settings.llm_provider === "openai" || settings.llm_provider === "anthropic") && (
               <p className="text-xs text-amber-400 bg-amber-400/10 px-3 py-2 rounded-md mt-2">
-                This provider charges per API call. Usage costs are billed directly
-                by {settings.llm_provider === "openai" ? "OpenAI" : "Anthropic"} to
-                your account. Check their pricing page for current rates.
+                {t("providerPaidWarning", [settings.llm_provider === "openai" ? "OpenAI" : "Anthropic"])}
               </p>
             )}
           </div>
 
-          {settings.llm_provider !== "local" && settings.llm_provider !== "gemma4" && <div>
-            <label className="text-xs text-neutral-400 mb-1 block">
-              API Key
-            </label>
-            <input
-              type="password"
-              value={settings.llm_api_key}
-              onChange={(e) => update({ llm_api_key: e.target.value })}
-              placeholder="sk-..."
-              className="w-full text-sm px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md focus:outline-none focus:border-blue-500"
-            />
-          </div>}
+          {settings.llm_provider !== "local" && settings.llm_provider !== "gemma4" && (
+            <div>
+              <label className="text-xs text-neutral-400 mb-1 block">{t("apiKeyLabel")}</label>
+              <input
+                type="password"
+                value={settings.llm_api_key}
+                onChange={(e) => update({ llm_api_key: e.target.value })}
+                placeholder="sk-..."
+                className={inputClass}
+              />
+            </div>
+          )}
 
-          {settings.llm_provider !== "local" && settings.llm_provider !== "gemma4" && <div>
-            <label className="text-xs text-neutral-400 mb-1 block">
-              Model (optional, leave blank for default)
-            </label>
-            <input
-              type="text"
-              value={settings.llm_model}
-              onChange={(e) => update({ llm_model: e.target.value })}
-              placeholder={
-                settings.llm_provider === "gemini"
-                  ? "gemini-2.5-flash"
-                  : settings.llm_provider === "openai"
-                    ? "gpt-4o-mini"
-                    : settings.llm_provider === "anthropic"
-                      ? "claude-sonnet-4-20250514"
-                      : "llama-3.1-8b-instant"
-              }
-              className="w-full text-sm px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md focus:outline-none focus:border-blue-500"
-            />
-          </div>}
+          {settings.llm_provider !== "local" && settings.llm_provider !== "gemma4" && (
+            <div>
+              <label className="text-xs text-neutral-400 mb-1 block">{t("modelOptionalLabel")}</label>
+              <input
+                type="text"
+                value={settings.llm_model}
+                onChange={(e) => update({ llm_model: e.target.value })}
+                placeholder={
+                  settings.llm_provider === "gemini"
+                    ? "gemini-2.5-flash"
+                    : settings.llm_provider === "openai"
+                      ? "gpt-4o-mini"
+                      : settings.llm_provider === "anthropic"
+                        ? "claude-sonnet-4-20250514"
+                        : "llama-3.1-8b-instant"
+                }
+                className={inputClass}
+              />
+            </div>
+          )}
         </div>
       </section>
 
@@ -394,13 +418,11 @@ export default function Settings() {
             : "bg-blue-600 hover:bg-blue-500 text-white"
         }`}
       >
-        {saved ? "Saved!" : "Save Settings"}
+        {saved ? t("saved") : t("saveSettings")}
       </button>
     </div>
   );
 }
-
-
 
 function Toggle({
   label,

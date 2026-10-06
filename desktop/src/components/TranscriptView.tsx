@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { languageName } from "../lib/languages";
+import { useT, type TFn } from "../i18n";
 
 interface TranscriptResult {
   raw: string;
@@ -22,13 +23,13 @@ interface TranscriptViewProps {
   backlogSecs?: number;
 }
 
-function LanguageChip({ code }: { code: string | null | undefined }) {
+function LanguageChip({ code, t }: { code: string | null | undefined; t: TFn }) {
   const name = languageName(code);
   if (!name) return null;
   return (
     <span
       className="text-xs px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 whitespace-nowrap"
-      title="Detected language"
+      title={t("detectedLanguage")}
     >
       {name}
     </span>
@@ -71,6 +72,7 @@ export default function TranscriptView({
   backlogSecs = 0,
 }: TranscriptViewProps) {
   const behind = Math.round(backlogSecs);
+  const t = useT();
   const [viewMode, setViewMode] = useState<ViewMode>("healed");
   const [structured, setStructured] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState<string | null>(null);
@@ -161,9 +163,7 @@ export default function TranscriptView({
   if (!transcript && !isProcessing && !isRecording) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <p className="text-neutral-500 text-sm">
-          Your transcript will appear here
-        </p>
+        <p className="text-neutral-500 text-sm">{t("transcriptPlaceholder")}</p>
       </div>
     );
   }
@@ -211,13 +211,13 @@ export default function TranscriptView({
     <div className="flex-1 flex flex-col gap-3 min-h-0">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold text-neutral-400">Transcript</h2>
+          <h2 className="text-sm font-semibold text-neutral-400">{t("transcriptTitle")}</h2>
           {transcript && (
             <span className="text-xs text-neutral-600">
               {transcript.duration_secs.toFixed(1)}s
             </span>
           )}
-          <LanguageChip code={detectedLanguage} />
+          <LanguageChip code={detectedLanguage} t={t} />
         </div>
         {transcript && (
           <div className="flex items-center gap-2">
@@ -225,13 +225,13 @@ export default function TranscriptView({
               <button
                 key={m}
                 onClick={() => setViewMode(m)}
-                className={`text-xs px-2 py-1 rounded transition-colors capitalize ${
+                className={`text-xs px-2 py-1 rounded transition-colors ${
                   viewMode === m
                     ? "bg-neutral-700 text-white"
                     : "bg-neutral-800 hover:bg-neutral-700 text-neutral-400"
                 }`}
               >
-                {m === "structured" ? "Prompt" : m}
+                {m === "structured" ? t("tabPrompt") : m === "raw" ? t("tabRaw") : t("tabHealed")}
               </button>
             ))}
             <button
@@ -240,7 +240,7 @@ export default function TranscriptView({
                 copied ? "bg-green-600" : "bg-blue-600 hover:bg-blue-500"
               }`}
             >
-              {copied ? "Copied!" : "Copy"}
+              {copied ? t("copied") : t("copy")}
             </button>
           </div>
         )}
@@ -277,17 +277,15 @@ export default function TranscriptView({
           ) : isRecording ? (
             <div className="h-full flex flex-col items-center justify-center gap-2">
               <LevelBars level={audioLevel} />
-              <p className="text-neutral-400 text-sm">Listening…</p>
+              <p className="text-neutral-400 text-sm">{t("listening")}</p>
             </div>
           ) : (
             <p className="text-neutral-500 text-sm animate-pulse">
-              {behind > 1 ? `Transcribing audio… ${behind} s left` : "Transcribing audio..."}
+              {behind > 1 ? t("transcribingLeft", [behind]) : t("transcribing")}
             </p>
           )
         ) : structuring && !streamingText ? (
-          <p className="text-neutral-500 text-sm animate-pulse">
-            Structuring as prompt...
-          </p>
+          <p className="text-neutral-500 text-sm animate-pulse">{t("structuring")}</p>
         ) : (
           <p className="text-sm leading-relaxed whitespace-pre-wrap">
             {displayText}
@@ -302,12 +300,12 @@ export default function TranscriptView({
             <>
               <LevelBars level={audioLevel} />
               <span className="text-xs text-neutral-500">
-                {behind > 2 ? `Transcribing… (${behind} s behind)` : "Listening…"}
+                {behind > 2 ? t("transcribingBehind", [behind]) : t("listening")}
               </span>
             </>
           ) : (
             <span className="text-xs text-neutral-500 animate-pulse">
-              {behind > 1 ? `Finishing up… (${behind} s left)` : "Finishing up…"}
+              {behind > 1 ? t("finishingUpLeftParen", [behind]) : t("finishingUp")}
             </span>
           )}
         </div>
@@ -318,7 +316,7 @@ export default function TranscriptView({
           onClick={handleStructure}
           className="text-xs px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-md transition-colors self-start"
         >
-          Structure as Prompt
+          {t("structureAsPrompt")}
         </button>
       )}
 

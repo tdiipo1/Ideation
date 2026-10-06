@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Ideation",
+  "name": "__MSG_extNameFull__",
+  "default_locale": "en",
   "version": "0.2.0",
   "minimum_chrome_version": "114",
-  "description": "Voice-to-text with history, healing, and settings. Powered by local Whisper AI.",
+  "description": "__MSG_extDescFull__",
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",
@@ -53,14 +54,14 @@
         "default": "Alt+I",
         "mac": "MacCtrl+I"
       },
-      "description": "Open Ideation"
+      "description": "__MSG_cmdOpen__"
     },
     "toggle-recording": {
       "suggested_key": {
         "default": "Alt+R",
         "mac": "MacCtrl+R"
       },
-      "description": "Start/stop recording"
+      "description": "__MSG_cmdToggle__"
     }
   },
   "content_security_policy": {
