@@ -21,6 +21,7 @@ function App() {
     notice,
     detectedLanguage,
     backlogSecs,
+    phase,
   } = useRecording();
   const modelStatus = useModelStatus();
   const [tab, setTab] = useState<Tab>("record");
@@ -74,6 +75,7 @@ function App() {
               onToggle={toggle}
               modelStatus={modelStatus}
               backlogSecs={backlogSecs}
+              phase={phase}
             />
             {notice && state === "idle" && (
               <p className="text-xs text-neutral-500 text-center">{notice}</p>

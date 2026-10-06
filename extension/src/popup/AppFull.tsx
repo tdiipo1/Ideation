@@ -6,7 +6,7 @@ import { useSettings } from "../hooks/useSettings";
 import { copyToClipboard } from "../lib/clipboard";
 import { insertIntoPage } from "../lib/insert";
 import { healTranscript } from "../lib/healing";
-import { structurePrompt } from "../lib/structuring";
+import { structurePrompt, correctTranscript } from "../lib/structuring";
 import { saveSettings } from "../lib/storage";
 import { SHARED_GEMINI_KEY } from "../types";
 import {
@@ -62,6 +62,16 @@ export default function AppFull() {
   const [isStructuring, setIsStructuring] = useState(false);
   const [structureError, setStructureError] = useState<string | null>(null);
   const [autoCopied, setAutoCopied] = useState(false);
+  // Smart correction (LLM) in flight for the transcript on screen.
+  const [correcting, setCorrecting] = useState(false);
+
+  // The key used for LLM calls: the shared Gemini key, or the user's own.
+  function resolveApiKey(): string {
+    if (settings.llmProvider === "gemini" && settings.llmKeyMode === "shared") {
+      return SHARED_GEMINI_KEY;
+    }
+    return settings.llmApiKey;
+  }
 
   // Keyboard shortcut (Alt+R): the service worker relays the command here.
   const toggleRef = useRef<() => void>(() => {});
@@ -95,12 +105,36 @@ export default function AppFull() {
       const raw = result.text;
       const healLang =
         result.language ?? (settings.language !== "auto" ? settings.language : null);
-      const healed = settings.healingEnabled ? healTranscript(raw, healLang) : raw;
+      let healed = settings.healingEnabled ? healTranscript(raw, healLang) : raw;
 
       setTranscript(raw);
       setHealedTranscript(healed);
       setStructuredText(null);
       setStructureError(null);
+
+      // Optional LLM pass: fix misheard words from sentence context. The
+      // rule-healed text is already on screen; the clipboard is written once,
+      // after the pass (or right away if it fails or is off).
+      const apiKey = settings.smartCorrection ? resolveApiKey() : "";
+      if (apiKey) {
+        setCorrecting(true);
+        try {
+          const fixed = await correctTranscript(
+            { provider: settings.llmProvider, apiKey, model: settings.llmModel || undefined },
+            healed,
+            languageName(healLang),
+          );
+          if (fixed) {
+            healed = fixed;
+            setHealedTranscript(fixed);
+          }
+        } catch (err) {
+          console.warn("Smart correction failed:", err);
+        } finally {
+          setCorrecting(false);
+        }
+      }
+
       const copied = await copyToClipboard(healed);
       setAutoCopied(copied);
       if (settings.insertIntoPage) {
@@ -171,11 +205,7 @@ export default function AppFull() {
   async function handleStructure() {
     if (!healedTranscript && !transcript) return;
 
-    // Resolve the API key: shared key for Gemini, or user's own key
-    let apiKey = settings.llmApiKey;
-    if (settings.llmProvider === "gemini" && settings.llmKeyMode === "shared") {
-      apiKey = SHARED_GEMINI_KEY;
-    }
+    const apiKey = resolveApiKey();
     if (!apiKey) {
       setStructureError("No API key configured. Go to Settings to add one.");
       return;
@@ -313,6 +343,7 @@ export default function AppFull() {
             structureError={structureError}
             autoCopied={autoCopied}
             detectedLanguage={detectedLanguage}
+            correcting={correcting}
           />
         </>
       )}

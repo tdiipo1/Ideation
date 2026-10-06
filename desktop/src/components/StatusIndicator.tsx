@@ -7,6 +7,8 @@ interface StatusIndicatorProps {
   modelStatus?: ModelStatus | null;
   /** Seconds of audio still to transcribe while processing. */
   backlogSecs?: number;
+  /** "idle" | "transcribing" | "polishing" */
+  phase?: string;
 }
 
 export default function StatusIndicator({
@@ -14,6 +16,7 @@ export default function StatusIndicator({
   onToggle,
   modelStatus = null,
   backlogSecs = 0,
+  phase = "idle",
 }: StatusIndicatorProps) {
   const isRecording = state === "recording";
   const isProcessing = state === "processing";
@@ -84,9 +87,11 @@ export default function StatusIndicator({
         {isRecording
           ? "Recording... Click or press shortcut to stop"
           : isProcessing
-            ? behind > 1
-              ? `Finishing up… ${behind} s left`
-              : "Processing audio..."
+            ? phase === "polishing"
+              ? "Polishing with AI…"
+              : behind > 1
+                ? `Finishing up… ${behind} s left`
+                : "Processing audio..."
             : modelLoading
               ? "Loading speech model…"
               : "Click or press Ctrl+Shift+Space to record"}

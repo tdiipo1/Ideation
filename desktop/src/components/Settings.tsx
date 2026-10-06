@@ -273,6 +273,12 @@ export default function Settings() {
             onChange={(v) => update({ healing_enabled: v })}
           />
           <Toggle
+            label="Smart correction (local AI)"
+            description="After each recording, fix misheard words from sentence context with a local Ollama model (Phi, Gemma, Qwen…). Stays on this machine; requires Ollama."
+            checked={settings.smart_correction}
+            onChange={(v) => update({ smart_correction: v })}
+          />
+          <Toggle
             label="Auto-copy to clipboard"
             description="Automatically copy the transcript to clipboard after recording"
             checked={settings.auto_copy}

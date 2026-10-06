@@ -22,6 +22,8 @@ interface TranscriptBoxProps {
   autoCopied?: boolean;
   /** Language detected/locked for the current or last recording. */
   detectedLanguage?: string | null;
+  /** Smart correction (LLM) is still polishing the healed text. */
+  correcting?: boolean;
 }
 
 function LanguageChip({ code }: { code: string | null | undefined }) {
@@ -79,6 +81,7 @@ export default function TranscriptBox({
   accent = "blue",
   autoCopied = false,
   detectedLanguage = null,
+  correcting = false,
 }: TranscriptBoxProps) {
   const [viewMode, setViewMode] = useState<"healed" | "raw" | "structured">("healed");
   const [copied, setCopied] = useState(false);
@@ -298,6 +301,9 @@ export default function TranscriptBox({
             </button>
           )}
           <LanguageChip code={detectedLanguage} />
+          {correcting && (
+            <span className="text-[10px] text-purple-300 animate-pulse">Polishing with AI…</span>
+          )}
         </div>
         <div className="flex gap-1">
           {onInsert && (

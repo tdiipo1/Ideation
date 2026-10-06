@@ -289,6 +289,29 @@ export default function SettingsPanel({ settings, onUpdate, onSave }: SettingsPa
             </div>
           )}
 
+          {/* Smart correction */}
+          <label className="flex items-center gap-2 cursor-pointer mt-1">
+            <div
+              onClick={() => onUpdate({ smartCorrection: !settings.smartCorrection })}
+              className={`w-8 h-4 rounded-full transition-colors relative ${
+                settings.smartCorrection ? "bg-purple-500" : "bg-neutral-700"
+              }`}
+            >
+              <div
+                className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                  settings.smartCorrection ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </div>
+            <div>
+              <span className="text-xs">Smart correction</span>
+              <p className="text-[10px] text-neutral-500">
+                After each recording, fix misheard words from sentence context. Sends the
+                transcript text to the provider above (Gemini shared key by default).
+              </p>
+            </div>
+          </label>
+
           {/* Model input (non-Gemini) */}
           {settings.llmProvider !== "gemini" && (
             <input

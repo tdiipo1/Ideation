@@ -134,6 +134,19 @@ fn emit_status(app: &AppHandle, transcribing: bool, backlog_secs: f32) {
         serde_json::json!({
             "transcribing": transcribing,
             "backlog_secs": backlog_secs.max(0.0),
+            "phase": if transcribing { "transcribing" } else { "idle" },
+        }),
+    );
+}
+
+/// `transcribe-status` with a named phase (e.g. "polishing" during smart correction).
+fn emit_phase(app: &AppHandle, phase: &str) {
+    let _ = app.emit(
+        "transcribe-status",
+        serde_json::json!({
+            "transcribing": phase != "idle",
+            "backlog_secs": 0.0,
+            "phase": phase,
         }),
     );
 }
@@ -582,11 +595,36 @@ async fn finish_recording(
         return Ok(None);
     }
 
-    let healed_transcript = if s.healing_enabled {
+    let mut healed_transcript = if s.healing_enabled {
         healing::heal_transcript(&raw_transcript, language.as_deref())
     } else {
         raw_transcript.clone()
     };
+
+    // Optional local-LLM pass: fix misheard words from sentence context.
+    // Bounded, and any failure just keeps the rule-healed text.
+    if s.smart_correction {
+        emit_phase(app, "polishing");
+        let language_name = language
+            .as_deref()
+            .and_then(whisper_rs::get_lang_id)
+            .and_then(whisper_rs::get_lang_str_full);
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            crate::structuring::correct_transcript(&healed_transcript, language_name),
+        )
+        .await
+        {
+            Ok(Ok(Some(fixed))) => healed_transcript = fixed,
+            Ok(Ok(None)) => {}
+            Ok(Err(e)) => {
+                eprintln!("Smart correction skipped: {}", e);
+                let _ = app.emit("notice", format!("Smart correction skipped: {}", e));
+            }
+            Err(_) => eprintln!("Smart correction timed out"),
+        }
+        emit_phase(app, "idle");
+    }
 
     let entry = history::add_entry(duration_secs, &raw_transcript, &healed_transcript)
         .map_err(|e| terr("history", e))?;

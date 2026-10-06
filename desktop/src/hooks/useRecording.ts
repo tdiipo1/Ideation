@@ -27,6 +27,8 @@ export function useRecording() {
   const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
   // Seconds of captured audio the backend hasn't transcribed yet.
   const [backlogSecs, setBacklogSecs] = useState(0);
+  // "idle" | "transcribing" | "polishing" (smart correction in flight).
+  const [phase, setPhase] = useState("idle");
 
   useEffect(() => {
     let level = 0;
@@ -72,10 +74,11 @@ export function useRecording() {
       setNotice(event.payload);
     });
 
-    const unlistenStatus = listen<{ transcribing: boolean; backlog_secs: number }>(
+    const unlistenStatus = listen<{ transcribing: boolean; backlog_secs: number; phase?: string }>(
       "transcribe-status",
       (event) => {
         setBacklogSecs(event.payload.backlog_secs);
+        setPhase(event.payload.phase ?? (event.payload.transcribing ? "transcribing" : "idle"));
       },
     );
 
@@ -128,5 +131,6 @@ export function useRecording() {
     notice,
     detectedLanguage,
     backlogSecs,
+    phase,
   };
 }
