@@ -370,7 +370,7 @@ export function scenesFor(edition) {
         brand(edition) +
           copy(
             "From ramble to prompt, one click.",
-            "Structure as Prompt organizes your stream of consciousness into a prompt for ChatGPT, Claude or Gemini. A free Gemini key is included, or bring your own.",
+            "Structure as Prompt organizes your stream of consciousness into a prompt for the AI assistant you use. A free Gemini key is included, or bring your own.",
             ["Gemini", "OpenAI", "Anthropic", "Groq"],
           ) +
           stage(panel(edition, { state: "idle", view: "prompt", hasPrompt: true, text: PROMPT_TEXT, lang: "English" })),

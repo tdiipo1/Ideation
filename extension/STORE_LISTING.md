@@ -45,7 +45,7 @@ Ideation turns your spoken thoughts into clean, ready-to-use text. Speech recogn
 WHAT YOU CAN DO
 • Dictate in any language. The spoken language is detected in the first seconds of each recording, or pin one in Settings. 99 languages with the multilingual models.
 • Get clean text, not a raw transcript. Filler words, stutters and Whisper artifacts are removed and capitalization is fixed, with language-aware rules for English, Spanish, Portuguese, French, German, Chinese and Japanese.
-• Turn a ramble into a prompt. One click restructures your stream of consciousness into an organized prompt for ChatGPT, Claude, Gemini or any AI assistant. A free Google Gemini key is included, or bring your own key for Gemini, OpenAI, Anthropic or Groq.
+• Turn a ramble into a prompt. One click restructures your stream of consciousness into an organized prompt for the AI assistant you use. A free Google Gemini key is included, or bring your own key for Gemini, OpenAI, Anthropic or Groq.
 • Smart correction (optional, off by default). An AI model fixes words that were clearly misheard from context, without changing anything else.
 • Paste or insert. Every transcript is copied to the clipboard automatically. Insert types it into the text field you were in.
 • Keep a history. Browse and re-copy past transcripts. Stored only in your browser.
@@ -58,7 +58,7 @@ HOW IT WORKS
 4. Paste it, insert it into the page, or click Structure as Prompt.
 
 WORKS ANYWHERE YOU TYPE
-ChatGPT, Claude, Gemini, Gmail, Google Docs, Notion, Slack, GitHub, Jira… the side panel stays open while you browse other tabs.
+The side panel stays open while you switch tabs, so you can dictate into any web page: chats with AI assistants, email, documents, notes and issue trackers.
 
 PRIVATE BY DESIGN
 • Audio is transcribed on your device. No account, no cloud, no subscription.
@@ -83,7 +83,7 @@ Ideation convierte lo que dices en texto limpio y listo para usar. El reconocimi
 QUÉ PUEDES HACER
 • Dictar en cualquier idioma. El idioma se detecta en los primeros segundos de cada grabación, o fíjalo en Ajustes. 99 idiomas con los modelos multilingües.
 • Obtener texto limpio, no una transcripción en bruto. Se eliminan muletillas, tartamudeos y artefactos de Whisper, y se corrigen las mayúsculas, con reglas específicas para español, inglés, portugués, francés, alemán, chino y japonés.
-• Convertir un monólogo en un prompt. Con un clic, tu flujo de ideas se reorganiza en un prompt ordenado para ChatGPT, Claude, Gemini o cualquier asistente de IA. Incluye una clave gratuita de Google Gemini, o usa la tuya de Gemini, OpenAI, Anthropic o Groq.
+• Convertir un monólogo en un prompt. Con un clic, tu flujo de ideas se reorganiza en un prompt ordenado para el asistente de IA que uses. Incluye una clave gratuita de Google Gemini, o usa la tuya de Gemini, OpenAI, Anthropic o Groq.
 • Corrección inteligente (opcional, desactivada por defecto). Un modelo de IA corrige palabras claramente mal entendidas según el contexto, sin cambiar nada más.
 • Pegar o insertar. Cada transcripción se copia al portapapeles automáticamente. Insertar la escribe en el campo de texto donde estabas.
 • Guardar un historial. Consulta y vuelve a copiar transcripciones anteriores. Se guarda solo en tu navegador.
@@ -96,7 +96,7 @@ CÓMO FUNCIONA
 4. Pégala, insértala en la página o haz clic en Estructurar como prompt.
 
 FUNCIONA DONDE SEA QUE ESCRIBAS
-ChatGPT, Claude, Gemini, Gmail, Google Docs, Notion, Slack, GitHub, Jira… el panel lateral sigue abierto mientras navegas por otras pestañas.
+El panel lateral sigue abierto mientras cambias de pestaña, así que puedes dictar en cualquier página web: chats con asistentes de IA, correo, documentos, notas y gestores de tareas.
 
 PRIVADO POR DISEÑO
 • El audio se transcribe en tu equipo. Sin cuenta, sin nube, sin suscripción.
@@ -121,7 +121,7 @@ Ideation 把你说的话变成干净、可直接使用的文字。语音识别�
 你可以做什么
 • 用任何语言口述。每次录音的前几秒自动检测语言，也可以在设置中固定语言。多语言模型支持 99 种语言。
 • 得到干净的文字，而不是原始转写。自动去除口头禅、结巴和 Whisper 的常见错误，修正大小写；对中文、英语、西班牙语、葡萄牙语、法语、德语、日语有专门的规则。
-• 把一段漫谈整理成提示词。一键把你的思绪流整理成结构清晰的提示词，可用于 ChatGPT、Claude、Gemini 或任何 AI 助手。内置免费的 Google Gemini 密钥，也可以使用你自己的 Gemini、OpenAI、Anthropic 或 Groq 密钥。
+• 把一段漫谈整理成提示词。一键把你的思绪流整理成结构清晰的提示词，可用于你使用的任何 AI 助手。内置免费的 Google Gemini 密钥，也可以使用你自己的 Gemini、OpenAI、Anthropic 或 Groq 密钥。
 • 智能纠错（可选，默认关闭）。AI 模型根据上下文修正明显听错的词，其他内容保持不变。
 • 粘贴或插入。每次转写都会自动复制到剪贴板；「插入」会把文字直接输入到你刚才所在的输入框。
 • 保留历史记录。浏览并重新复制以前的转写，只保存在你的浏览器里。
@@ -134,7 +134,7 @@ Ideation 把你说的话变成干净、可直接使用的文字。语音识别�
 4. 粘贴、插入到页面，或点击「整理为提示词」。
 
 在任何输入框都能用
-ChatGPT、Claude、Gemini、Gmail、Google 文档、Notion、Slack、GitHub、Jira…… 切换标签页时侧边栏保持打开。
+切换标签页时侧边栏保持打开，你可以在任何网页中口述：AI 助手对话、邮件、文档、笔记和任务管理工具。
 
 隐私优先
 • 音频在你的设备上转写。无需账号，不用云端，没有订阅。
