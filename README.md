@@ -33,7 +33,7 @@ Two editions from one codebase:
 | Settings (model, language, provider) | - | Yes |
 | Side Panel UI | Yes | Yes |
 
-**Install from the [Chrome Web Store](#)** (pending review)
+**Install from the Chrome Web Store:** [Ideation](https://chromewebstore.google.com/detail/jhdhkbceipidnhfolikdpmopghgkicjo?utm_source=github&utm_medium=readme) · [Ideation Lite](https://chromewebstore.google.com/detail/ideation-lite/pmanijfhocbgdafgamjnhdgojennegmm?utm_source=github&utm_medium=readme)
 
 Models offered in the extension (downloaded once from Hugging Face, cached in the browser):
 

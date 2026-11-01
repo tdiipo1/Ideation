@@ -1,8 +1,8 @@
 {
-  "extNameFull": { "message": "Ideation" },
-  "extDescFull": { "message": "Voz a texto en cualquier idioma, con historial, limpieza y ajustes. Funciona con Whisper AI en tu equipo." },
-  "extNameLite": { "message": "Ideation Lite" },
-  "extDescLite": { "message": "Voz a texto rápido en cualquier idioma: graba, transcribe, copia. Funciona con Whisper AI en tu equipo." },
+  "extNameFull": { "message": "Ideation: Voz a texto y prompts de IA" },
+  "extDescFull": { "message": "Habla y obtén texto limpio. Whisper corre en tu navegador: el audio nunca sale de tu equipo. Limpieza, prompts de IA, 99 idiomas." },
+  "extNameLite": { "message": "Ideation Lite: Voz a texto rápido" },
+  "extDescLite": { "message": "Dictado rápido en cualquier idioma. Whisper corre en tu navegador: nada sale de tu equipo. Graba, transcribe, copia. Gratis." },
   "cmdOpen": { "message": "Abrir Ideation" },
   "cmdOpenLite": { "message": "Abrir Ideation Lite" },
   "cmdToggle": { "message": "Iniciar/detener la grabación" },
@@ -105,5 +105,10 @@
   "smartCorrectionLabel": { "message": "Corrección inteligente" },
   "smartCorrectionHint": { "message": "Tras cada grabación, corrige palabras mal entendidas según el contexto de la frase. Envía el texto de la transcripción al proveedor de arriba (clave compartida de Gemini por defecto)." },
   "settingsSaved": { "message": "¡Ajustes guardados!" },
-  "saveSettings": { "message": "Guardar ajustes" }
+  "saveSettings": { "message": "Guardar ajustes" },
+
+  "rateTitle": { "message": "¿Te gusta $1? Una valoración en Chrome Web Store ayuda a que otros lo encuentren." },
+  "rate": { "message": "Valorar" },
+  "notNow": { "message": "Ahora no" },
+  "feedback": { "message": "Comentarios" }
 }

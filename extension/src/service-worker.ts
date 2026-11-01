@@ -1,3 +1,9 @@
+import { uninstallSurveyUrl } from "./lib/feedback";
+
+// Ask why on uninstall: Chrome opens this page (a prefilled GitHub issue)
+// after the extension is removed. Nothing is sent unless the user submits it.
+chrome.runtime.setUninstallURL(uninstallSurveyUrl(), () => void chrome.runtime.lastError);
+
 // Open the side panel when the extension icon is clicked
 chrome.action.onClicked.addListener(async (tab) => {
   if (tab.id) {

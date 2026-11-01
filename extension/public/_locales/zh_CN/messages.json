@@ -1,8 +1,8 @@
 {
-  "extNameFull": { "message": "Ideation" },
-  "extDescFull": { "message": "多语言语音转文字，带历史记录、文本清理和设置。由本地运行的 Whisper AI 驱动。" },
-  "extNameLite": { "message": "Ideation Lite" },
-  "extDescLite": { "message": "快速多语言语音转文字：录音、转写、复制。由本地运行的 Whisper AI 驱动。" },
+  "extNameFull": { "message": "Ideation：语音转文字与 AI 提示词" },
+  "extDescFull": { "message": "说话，得到干净的文字。Whisper 在浏览器本地运行，音频不离开你的设备。自动清理、AI 提示词整理、支持 99 种语言。" },
+  "extNameLite": { "message": "Ideation Lite：快速语音转文字" },
+  "extDescLite": { "message": "任何语言的快速语音输入。Whisper 在浏览器本地运行，数据不离开你的设备。录音、转写、复制，完全免费。" },
   "cmdOpen": { "message": "打开 Ideation" },
   "cmdOpenLite": { "message": "打开 Ideation Lite" },
   "cmdToggle": { "message": "开始/停止录音" },
@@ -105,5 +105,10 @@
   "smartCorrectionLabel": { "message": "智能纠错" },
   "smartCorrectionHint": { "message": "每次录音后，根据上下文修正听错的词。会将转写文本发送给上方选择的服务（默认使用 Gemini 共享密钥）。" },
   "settingsSaved": { "message": "设置已保存！" },
-  "saveSettings": { "message": "保存设置" }
+  "saveSettings": { "message": "保存设置" },
+
+  "rateTitle": { "message": "喜欢 $1 吗？在 Chrome 应用商店评个分，能帮助更多人找到它。" },
+  "rate": { "message": "去评分" },
+  "notNow": { "message": "以后再说" },
+  "feedback": { "message": "反馈" }
 }

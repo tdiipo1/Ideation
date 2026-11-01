@@ -1,8 +1,8 @@
 {
-  "extNameFull": { "message": "Ideation" },
-  "extDescFull": { "message": "Voice-to-text in any language with history, healing and settings. Powered by local Whisper AI." },
-  "extNameLite": { "message": "Ideation Lite" },
-  "extDescLite": { "message": "Quick voice-to-text in any language: record, transcribe, copy. Powered by local Whisper AI." },
+  "extNameFull": { "message": "Ideation: Voice to Text & AI Prompts" },
+  "extDescFull": { "message": "Talk, get clean text. Whisper runs in your browser, audio never leaves your device. Cleanup, AI prompt structuring, 99 languages." },
+  "extNameLite": { "message": "Ideation Lite: Quick Voice to Text" },
+  "extDescLite": { "message": "Quick voice typing in any language. Whisper runs in your browser, nothing leaves your device. Record, transcribe, copy. Free." },
   "cmdOpen": { "message": "Open Ideation" },
   "cmdOpenLite": { "message": "Open Ideation Lite" },
   "cmdToggle": { "message": "Start/stop recording" },
@@ -105,5 +105,10 @@
   "smartCorrectionLabel": { "message": "Smart correction" },
   "smartCorrectionHint": { "message": "After each recording, fix misheard words from sentence context. Sends the transcript text to the provider above (Gemini shared key by default)." },
   "settingsSaved": { "message": "Settings Saved!" },
-  "saveSettings": { "message": "Save Settings" }
+  "saveSettings": { "message": "Save Settings" },
+
+  "rateTitle": { "message": "Enjoying $1? A rating on the Chrome Web Store helps others find it." },
+  "rate": { "message": "Rate it" },
+  "notNow": { "message": "Not now" },
+  "feedback": { "message": "Feedback" }
 }

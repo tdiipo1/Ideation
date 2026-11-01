@@ -1,7 +1,7 @@
 {
   "name": "ideation-extension",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "scripts": {
     "dev": "cross-env VITE_EDITION=lite vite build --watch",

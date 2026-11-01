@@ -26,6 +26,14 @@ import TranscriptBox from "../components/TranscriptBox";
 import HistoryView from "../components/HistoryView";
 import SettingsPanel from "../components/SettingsPanel";
 import ShortcutHint from "../components/ShortcutHint";
+import {
+  EDITION_NAME,
+  feedbackUrl,
+  openInNewTab,
+  ratingUrl,
+  recordingCompleted,
+  settleRatingNudge,
+} from "../lib/feedback";
 
 type Tab = "record" | "history" | "settings";
 const TAB_KEYS: Record<Tab, string> = {
@@ -70,6 +78,8 @@ export default function AppFull() {
   const [autoCopied, setAutoCopied] = useState(false);
   // Smart correction (LLM) in flight for the transcript on screen.
   const [correcting, setCorrecting] = useState(false);
+  // One-time "rate it" card, unlocked after a few successful recordings.
+  const [ratingNudge, setRatingNudge] = useState(false);
 
   // The key used for LLM calls: the shared Gemini key, or the user's own.
   function resolveApiKey(): string {
@@ -154,9 +164,16 @@ export default function AppFull() {
         raw,
         healed,
       });
+      if (await recordingCompleted()) setRatingNudge(true);
     }
   }
   toggleRef.current = handleToggle;
+
+  function answerRatingNudge(rate: boolean) {
+    setRatingNudge(false);
+    settleRatingNudge();
+    if (rate) openInNewTab(ratingUrl());
+  }
 
   const ui = uiLanguage();
   const idleReady = modelState === "ready" && state === "idle";
@@ -330,6 +347,25 @@ export default function AppFull() {
               </div>
             </div>
           )}
+          {ratingNudge && idleReady && (
+            <div className="bg-neutral-900 rounded-lg p-2.5 border border-blue-900/60 flex flex-col gap-1.5">
+              <p className="text-[11px] text-neutral-300">{t("rateTitle", [EDITION_NAME])}</p>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => answerRatingNudge(true)}
+                  className="text-[10px] px-2.5 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
+                >
+                  {t("rate")}
+                </button>
+                <button
+                  onClick={() => answerRatingNudge(false)}
+                  className="text-[10px] px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded transition-colors"
+                >
+                  {t("notNow")}
+                </button>
+              </div>
+            </div>
+          )}
           <TranscriptBox
             text={state === "idle" ? transcript : partialText}
             healedText={state === "idle" ? healedTranscript : null}
@@ -363,8 +399,17 @@ export default function AppFull() {
         </div>
       )}
 
-      <footer className="text-[10px] text-neutral-700 text-center mt-auto pt-2">
+      <footer className="text-[10px] text-neutral-700 text-center mt-auto pt-2 flex items-center justify-center gap-2">
         <ShortcutHint variant="verbose" />
+        <span aria-hidden="true">·</span>
+        <a
+          href={feedbackUrl()}
+          target="_blank"
+          rel="noreferrer"
+          className="hover:text-neutral-400 transition-colors"
+        >
+          {t("feedback")}
+        </a>
       </footer>
     </div>
   );
