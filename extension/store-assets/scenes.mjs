@@ -301,8 +301,8 @@ export function scenesFor(edition) {
       `<div class="tile"><img src="${iconDataUri(BRAND[edition].color)}" alt=""><div><h1>${BRAND[edition].name}</h1><p>${
         edition === "full" ? "Voice to text, locally." : "Quick voice to text."
       }</p><div class="pills">${(edition === "full"
-        ? ["No cloud", "Free", "99 languages"]
-        : ["No cloud", "Free", "Any language"]
+        ? ["Runs locally", "99 languages"]
+        : ["Runs locally", "Any language"]
       )
         .map((x) => `<span class="pill">${x}</span>`)
         .join("")}</div></div></div>`,
@@ -320,7 +320,7 @@ export function scenesFor(edition) {
       edition === "full"
         ? "Whisper runs in your browser, so your audio never leaves your device. Clean transcripts, AI prompt structuring, 99 languages."
         : "Click the mic, talk, click again. The transcript is on your clipboard. Whisper runs in your browser, nothing leaves your device."
-    }</p><div class="pills"><span class="pill">Runs locally</span><span class="pill">No account</span><span class="pill">Free</span></div></div>` +
+    }</p><div class="pills"><span class="pill">Runs locally</span><span class="pill">No account</span><span class="pill">Open source</span></div></div>` +
     `<div class="stage mq"><div class="scaled mq">${panel(edition, {
       state: "idle",
       text: edition === "full" ? HEALED_TEXT : LITE_TEXT,
@@ -350,7 +350,7 @@ export function scenesFor(edition) {
           copy(
             "Talk. Get clean text.",
             "Press Alt+R, speak, and paste anywhere. Whisper runs in your browser, so your audio never leaves your device.",
-            ["Runs locally", "No account", "Free"],
+            ["Runs locally", "No account", "Open source"],
           ) +
           stage(panel(edition, { state: "recording", text: LIVE_TEXT, pending: LIVE_PENDING, lang: "English" })),
       ),
@@ -389,7 +389,7 @@ export function scenesFor(edition) {
         copy(
           "Quick voice typing. Nothing else.",
           "Click the mic, talk, click again. The transcript is on your clipboard. Whisper runs in your browser, nothing leaves your device.",
-          ["Runs locally", "No account", "Free"],
+          ["Runs locally", "No account", "Open source"],
         ) +
         stage(panel(edition, { state: "recording", text: LIVE_TEXT, pending: LIVE_PENDING, lang: "English" })),
     ),
