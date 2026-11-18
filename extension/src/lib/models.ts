@@ -1,4 +1,4 @@
-// Single registry of the Whisper ONNX models the extension can run. Used by
+// Single registry of the speech models (Whisper, plus Moonshine for English) the extension can run. Used by
 // the settings panel, the one-time model nudges and the Lite edition default,
 // so the "is this model multilingual?" question has exactly one answer.
 //
@@ -15,7 +15,7 @@ export interface WhisperModel {
   sizeNote: string;
   note: string;
   multilingual: boolean;
-  tier: "tiny" | "base" | "small";
+  tier: "tiny" | "base" | "small" | "large";
   /** Comfortable only with WebGPU acceleration. */
   gpuRecommended?: boolean;
 }
@@ -25,6 +25,8 @@ export const BASE_EN = "onnx-community/whisper-base.en";
 export const SMALL_EN = "onnx-community/whisper-small.en";
 export const BASE_MULTI = "onnx-community/whisper-base";
 export const SMALL_MULTI = "onnx-community/whisper-small";
+export const TURBO_MULTI = "onnx-community/whisper-large-v3-turbo";
+export const MOONSHINE_BASE_EN = "onnx-community/moonshine-base-ONNX";
 
 export const WHISPER_MODELS: readonly WhisperModel[] = [
   {
@@ -36,6 +38,16 @@ export const WHISPER_MODELS: readonly WhisperModel[] = [
     note: "Fastest. Default on CPU-only machines.",
     multilingual: false,
     tier: "tiny",
+  },
+  {
+    id: MOONSHINE_BASE_EN,
+    label: "Moonshine Base (English)",
+    labelKey: "modelMoonshineBaseEn",
+    noteKey: "modelNoteMoonshineBaseEn",
+    sizeNote: "60–150 MB",
+    note: "Built for live dictation: fast, and more accurate than Whisper Base.",
+    multilingual: false,
+    tier: "base",
   },
   {
     id: BASE_EN,
@@ -79,6 +91,17 @@ export const WHISPER_MODELS: readonly WhisperModel[] = [
     tier: "small",
     gpuRecommended: true,
   },
+  {
+    id: TURBO_MULTI,
+    label: "Large v3 Turbo (Multilingual)",
+    labelKey: "modelTurboMulti",
+    noteKey: "modelNoteTurboMulti",
+    sizeNote: "1.1–1.6 GB",
+    note: "Best accuracy in every language. Large download; needs GPU acceleration.",
+    multilingual: true,
+    tier: "large",
+    gpuRecommended: true,
+  },
 ];
 
 export function findModel(id: string): WhisperModel | undefined {
@@ -94,7 +117,7 @@ export function isMultilingualModel(id: string | null | undefined): boolean {
   if (!id) return false;
   const known = findModel(id);
   if (known) return known.multilingual;
-  return !id.endsWith(".en") && !id.includes("distil");
+  return !id.endsWith(".en") && !id.includes("distil") && !id.includes("moonshine");
 }
 
 /** Default model for a browser UI language: English → tiny.en, else Base (Multilingual). */

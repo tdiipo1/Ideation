@@ -40,10 +40,12 @@ Models offered in the extension (downloaded once from Hugging Face, cached in th
 | Model | Download | Languages | When to use |
 |---|---|---|---|
 | Tiny (English) | 40–120 MB | English | Default on CPU-only machines; fastest |
+| Moonshine Base (English) | 60–150 MB | English | Built for dictation: fast, and more accurate than Whisper Base. Live captions are a preview; the final text is re-decoded when you stop |
 | Base (English) | 80–210 MB | English | Suggested automatically when WebGPU is available |
 | Small (English) | 250–590 MB | English | Best English accuracy; needs WebGPU |
 | Base (Multilingual) | 80–210 MB | 99 | Default when the browser isn't in English |
 | Small (Multilingual) | 250–590 MB | 99 | Much better for Spanish, Chinese, Portuguese…; needs WebGPU |
+| Large v3 Turbo (Multilingual) | 1.1–1.6 GB | 99 | Best accuracy in every language; large download, needs WebGPU |
 
 Honest guidance: for Chinese or Spanish, *Base* is usable but weak; *Small* is the practical minimum for good quality in the browser. The desktop app with *Large v3 Turbo* is the best option.
 
@@ -64,7 +66,7 @@ Full-featured desktop app with extras the browser can't do:
 
 **Download from [Releases](https://github.com/tdiipo1/Ideation/releases)**
 
-Models offered in the desktop app (`Settings → Whisper Model`; base.en is bundled):
+Models offered in the desktop app (`Settings → Speech model`; base.en is bundled):
 
 | Model | Size | Languages | When to use |
 |---|---|---|---|
@@ -74,17 +76,18 @@ Models offered in the desktop app (`Settings → Whisper Model`; base.en is bund
 | Small (Multilingual) | 466 MB | 99 | Good middle ground for Spanish/Chinese/Portuguese |
 | Large v3 Turbo (Multilingual) | 574 MB | 99 | Best quality; fast machines or GPU builds |
 | Distil Large v3.5 (English) | 1.5 GB | English | Highest English quality; fast machines |
+| NVIDIA Nemotron 3.5 (Multilingual) | 2.6 GB | 40 | NVIDIA’s streaming speech model (0.6B). Runs on the CPU through ONNX Runtime; no text-prompt context |
 
 ## Tech Stack
 
 ### Desktop
 - **Framework:** Tauri v2 (Rust + React + TypeScript)
-- **Transcription:** whisper-rs (native whisper.cpp bindings), one `WhisperState` per recording, Silero VAD driven standalone
+- **Transcription:** whisper-rs (native whisper.cpp bindings), one `WhisperState` per recording, Silero VAD driven standalone; NVIDIA Nemotron 3.5 ASR Streaming 0.6B through parakeet-rs (ONNX Runtime)
 - **Audio:** cpal + rubato (capture downsampled to 16 kHz on the fly)
 - **LLM:** Ollama (Phi, Gemma, Qwen… local), Gemini/OpenAI/Anthropic/Groq (API)
 
 ### Chrome Extension
-- **Transcription:** Transformers.js (Whisper ONNX; WebGPU or multi-threaded WebAssembly)
+- **Transcription:** Transformers.js (Whisper and Moonshine ONNX; WebGPU or multi-threaded WebAssembly)
 - **Audio:** getUserMedia + AudioWorklet
 - **UI:** React + TypeScript + Tailwind CSS, Chrome i18n
 - **LLM:** Google Gemini (shared free key included), BYOK for other providers

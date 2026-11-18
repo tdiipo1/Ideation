@@ -18,6 +18,7 @@ import {
   LogitsProcessor,
   LogitsProcessorList,
   WhisperTextStreamer,
+  TextStreamer,
   Tensor,
 } from "@huggingface/transformers";
 
@@ -89,6 +90,15 @@ function genConfig(): any {
   return transcriber?.model?.generation_config ?? {};
 }
 
+/**
+ * Moonshine models (English, built for live dictation) are not Whisper: no
+ * language or task tokens, a different processor output, and a decode length
+ * that must be tied to the audio length or they repeat themselves.
+ */
+function isMoonshine(): boolean {
+  return transcriber?.model?.config?.model_type === "moonshine";
+}
+
 function isMultilingual(): boolean {
   const g = genConfig();
   return !!g.is_multilingual && !!g.lang_to_id;
@@ -134,7 +144,12 @@ async function buildPipeline(model: string): Promise<void> {
   if (await isWebGPUAvailable()) {
     try {
       transcriber = (await pipeline("automatic-speech-recognition", model, {
-        dtype: { encoder_model: "fp32", decoder_model_merged: "q4" },
+        // Large v3 Turbo's fp32 encoder is 2.5 GB; its fp16 build (1.3 GB) is
+        // the one the reference WebGPU demo ships.
+        dtype: {
+          encoder_model: model.includes("large-v3-turbo") ? "fp16" : "fp32",
+          decoder_model_merged: "q4",
+        },
         device: "webgpu",
         progress_callback: onProgress,
       })) as unknown as Pipeline;
@@ -159,7 +174,7 @@ async function buildPipeline(model: string): Promise<void> {
 async function warmup(): Promise<void> {
   if (!transcriber || warmedUp) return;
   try {
-    await transcribePipeline(new Float32Array(SAMPLE_RATE), "en");
+    await runInference(new Float32Array(SAMPLE_RATE), "en");
   } catch {
     /* non-fatal */
   } finally {
@@ -213,6 +228,45 @@ async function detectLanguage(audio: Float32Array): Promise<string | null> {
   const seq = (out.tolist() as (bigint | number)[][])[0];
   if (!seq || seq.length < 2) return null;
   return idToCode.get(Number(seq[1])) ?? null;
+}
+
+/** Moonshine: plain generate, token budget tied to the clip length. */
+async function transcribeMoonshine(
+  audio: Float32Array,
+  onPartial?: (text: string) => void,
+): Promise<string> {
+  if (!transcriber) throw new Error("Model not loaded");
+  const { model, processor, tokenizer } = transcriber;
+  // The model is trained on clips up to 30 s; longer audio goes in pieces.
+  const piece = SAMPLE_RATE * 25;
+  let done = "";
+  for (let start = 0; start < audio.length; start += piece) {
+    const clip = audio.subarray(start, Math.min(audio.length, start + piece));
+    if (clip.length < SAMPLE_RATE / 10) break;
+    const inputs = await processor(clip);
+    const kwargs: Record<string, unknown> = {
+      ...inputs,
+      // ~6.5 tokens per second of speech is the model card's guidance.
+      max_new_tokens: Math.max(8, Math.ceil((clip.length / SAMPLE_RATE) * 6.5)),
+    };
+    if (onPartial) {
+      let streamed = "";
+      const prefix = done;
+      kwargs.streamer = new TextStreamer(tokenizer, {
+        skip_prompt: true,
+        skip_special_tokens: true,
+        callback_function: (t: string) => {
+          streamed += t;
+          onPartial((prefix ? prefix + " " : "") + streamed);
+        },
+      });
+    }
+    const out = (await model.generate(kwargs)) as Tensor;
+    const seq = ((out.tolist() as (bigint | number)[][])[0] ?? []).map((x) => Number(x));
+    const text = String(tokenizer.decode(seq, { skip_special_tokens: true })).trim();
+    if (text) done = done ? done + " " + text : text;
+  }
+  return done;
 }
 
 /**
@@ -292,6 +346,7 @@ async function runInference(
   onPartial?: (text: string) => void,
   prevText?: string,
 ): Promise<string> {
+  if (isMoonshine()) return transcribeMoonshine(audio, onPartial);
   if (audio.length / SAMPLE_RATE <= MAX_DIRECT_SECS) {
     try {
       return await transcribeDirect(audio, language, onPartial, prevText);

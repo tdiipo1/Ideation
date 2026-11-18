@@ -67,7 +67,12 @@ export default function AppFull() {
     backlogSecs,
     audioLevel,
     notice,
-  } = useRecording(transcribe, transcribeSegment, startSession);
+  } = useRecording(
+    transcribe,
+    transcribeSegment,
+    startSession,
+    settings.modelId.includes("moonshine"),
+  );
   const { entries, add, remove, clear } = useHistory();
   const [tab, setTab] = useState<Tab>("record");
   const [transcript, setTranscript] = useState<string | null>(null);

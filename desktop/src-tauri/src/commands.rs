@@ -526,7 +526,7 @@ async fn finish_recording(
     if !model_path.exists() {
         return Err(terr(
             "no-model",
-            "Whisper model not downloaded. Open Settings to download it.",
+            "Speech model not downloaded. Open Settings to download it.",
         ));
     }
 

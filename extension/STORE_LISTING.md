@@ -63,11 +63,11 @@ The side panel stays open while you switch tabs, so you can dictate into any web
 PRIVATE BY DESIGN
 • Audio is transcribed on your device. No account, no cloud, no subscription.
 • No analytics, no telemetry. The extension has no server.
-• The only optional network use: the one-time model download from Hugging Face (40 to 590 MB depending on the model), and the text, never audio, that you choose to send to an AI provider for prompt structuring or smart correction.
+• The only optional network use: the one-time model download from Hugging Face (40 MB to 1.6 GB depending on the model), and the text, never audio, that you choose to send to an AI provider for prompt structuring or smart correction.
 • Works offline once the model is downloaded.
 
 MODELS
-Choose in Settings. Tiny and Base run on any machine; Small gives the best accuracy and uses WebGPU when your browser exposes it.
+Choose in Settings. Tiny, Base and Moonshine (a fast English dictation model) run on any machine. Small and Large v3 Turbo give the best accuracy and use WebGPU when your browser exposes it.
 
 LOOKING FOR SOMETHING SIMPLER?
 Ideation Lite is the same local transcription with no history, settings or AI features, and no network permission beyond the model download.
@@ -101,11 +101,11 @@ El panel lateral sigue abierto mientras cambias de pestaña, así que puedes dic
 PRIVADO POR DISEÑO
 • El audio se transcribe en tu equipo. Sin cuenta, sin nube, sin suscripción.
 • Sin analíticas ni telemetría. La extensión no tiene servidor.
-• El único uso de red opcional: la descarga única del modelo desde Hugging Face (de 40 a 590 MB según el modelo) y el texto, nunca el audio, que decidas enviar a un proveedor de IA para estructurar prompts o la corrección inteligente.
+• El único uso de red opcional: la descarga única del modelo desde Hugging Face (de 40 MB a 1,6 GB según el modelo) y el texto, nunca el audio, que decidas enviar a un proveedor de IA para estructurar prompts o la corrección inteligente.
 • Funciona sin conexión una vez descargado el modelo.
 
 MODELOS
-Elige en Ajustes. Tiny y Base funcionan en cualquier equipo; Small ofrece la mejor precisión y usa WebGPU cuando tu navegador lo expone.
+Elige en Ajustes. Tiny, Base y Moonshine (un modelo rápido de dictado en inglés) funcionan en cualquier equipo. Small y Large v3 Turbo ofrecen la mejor precisión y usan WebGPU cuando tu navegador lo expone.
 
 ¿BUSCAS ALGO MÁS SIMPLE?
 Ideation Lite es la misma transcripción local sin historial, ajustes ni funciones de IA, y sin más permisos de red que la descarga del modelo.
@@ -139,11 +139,11 @@ Ideation 把你说的话变成干净、可直接使用的文字。语音识别�
 隐私优先
 • 音频在你的设备上转写。无需账号，不用云端，没有订阅。
 • 没有分析统计，没有遥测。扩展没有服务器。
-• 仅有的可选网络访问：首次从 Hugging Face 下载模型（按模型 40 到 590 MB），以及你主动选择发送给 AI 服务商用于整理提示词或智能纠错的文字（绝不发送音频）。
+• 仅有的可选网络访问：首次从 Hugging Face 下载模型（按模型 40 MB 到 1.6 GB），以及你主动选择发送给 AI 服务商用于整理提示词或智能纠错的文字（绝不发送音频）。
 • 模型下载后可离线使用。
 
 模型
-在设置中选择。Tiny 和 Base 在任何电脑上都能运行；Small 精度最好，浏览器支持 WebGPU 时会自动使用。
+在设置中选择。Tiny、Base 和 Moonshine（快速的英语听写模型）在任何电脑上都能运行；Small 和 Large v3 Turbo 精度最好，浏览器支持 WebGPU 时会自动使用。
 
 想要更简单的版本？
 Ideation Lite 提供同样的本地转写，没有历史记录、设置和 AI 功能，除模型下载外不需要任何网络权限。
@@ -275,8 +275,8 @@ cd extension
 npm install
 npm run build
 # Windows PowerShell
-Compress-Archive -Path dist-full\* -DestinationPath release\ideation-full-0.2.2.zip -Force
-Compress-Archive -Path dist-lite\* -DestinationPath release\ideation-lite-0.2.2.zip -Force
+Compress-Archive -Path dist-full\* -DestinationPath release\ideation-full-0.2.3.zip -Force
+Compress-Archive -Path dist-lite\* -DestinationPath release\ideation-lite-0.2.3.zip -Force
 ```
 
 Each zip is about 5.5 MB (one ONNX Runtime binary; models are downloaded on first use). The Full build reads the shared Gemini key from `VITE_SHARED_GEMINI_KEY` in `extension/.env`.
@@ -294,7 +294,7 @@ This extension runs OpenAI's Whisper speech recognition model locally in the bro
 These make the side panel cross-origin isolated so `SharedArrayBuffer` is available and ONNX Runtime can run the model on several WebAssembly threads. Without it transcription runs single-threaded and is several times slower on machines without WebGPU.
 
 **Why `host_permissions` for huggingface.co (and *.hf.co):**
-The Whisper model weights (40 to 600 MB depending on the chosen model) are downloaded from Hugging Face on first use and cached in the browser's Cache Storage. This is a one-time download. After caching, the extension works offline.
+The speech model weights (40 MB to 1.6 GB depending on the chosen model) are downloaded from Hugging Face on first use and cached in the browser's Cache Storage. This is a one-time download. After caching, the extension works offline.
 
 **Why `unlimitedStorage`:**
 The cached model weights can exceed the default storage quota; without this permission the browser may evict them and force a re-download.

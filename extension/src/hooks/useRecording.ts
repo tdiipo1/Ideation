@@ -8,6 +8,7 @@ import {
   setMinSegmentSecs,
   resetMinSegmentSecs,
   OVERLAP_SAMPLES,
+  splitAtPauses,
 } from "../lib/vad";
 import { joinWithDedup, isHallucination } from "../lib/transcript";
 import type { RecordingState } from "../types";
@@ -28,6 +29,12 @@ export function useRecording(
   onTranscribe: Transcriber,
   onTranscribeSegment: Transcriber = onTranscribe,
   onSessionStart?: () => void,
+  /**
+   * Decode the whole recording again when it stops, in long pause-aligned
+   * pieces, and use that as the result. For models that are fast but need
+   * long clips to punctuate well (Moonshine); the live text stays a preview.
+   */
+  fullDecodeAtStop = false,
 ) {
   const [state, setState] = useState<RecordingState>("idle");
   const [micError, setMicError] = useState<string | null>(null);
@@ -183,7 +190,31 @@ export function useRecording(
 
       let finalText = committedRef.current;
       try {
-        if (hasSpeech(tail)) {
+        if (fullDecodeAtStop) {
+          const whole = capture.getRange(0);
+          normalizeGain(whole);
+          const parts: string[] = [];
+          const pieces = splitAtPauses(whole);
+          for (let i = 0; i < pieces.length; i++) {
+            const piece = whole.subarray(pieces[i][0], pieces[i][1]);
+            if (mountedRef.current) setBacklogSecs((whole.length - pieces[i][0]) / 16000);
+            if (!hasSpeech(piece)) continue;
+            const ratio = speechRatio(piece);
+            const out = await onTranscribe(piece, {
+              voicedSecs: (ratio * piece.length) / 16000,
+              onPartial: (t) => {
+                if (mountedRef.current) setPendingText(t);
+              },
+            });
+            if (out.language) languageRef.current = out.language;
+            if (!isHallucination(out.text, ratio) && out.text.trim()) parts.push(out.text.trim());
+            if (mountedRef.current) {
+              setPartialText(parts.join(" "));
+              setPendingText(null);
+            }
+          }
+          if (parts.length > 0) finalText = parts.join(" ");
+        } else if (hasSpeech(tail)) {
           const ratio = speechRatio(tail);
           const out = await onTranscribe(tail, {
             voicedSecs: (ratio * tail.length) / 16000,
@@ -260,7 +291,7 @@ export function useRecording(
       }
       return null;
     }
-  }, [state, onTranscribe, onSessionStart, pumpSegment]);
+  }, [state, onTranscribe, onSessionStart, pumpSegment, fullDecodeAtStop]);
 
   const openInTab = useCallback(() => {
     // Open the popup page as a full tab where mic permissions work reliably

@@ -31,7 +31,7 @@ Two optional features send the *text* of a transcript (never audio) directly fro
 This is a direct connection between your browser and the provider's API — we are not an intermediary and do not see or store this data. The provider's own privacy policy applies to that request. If you use the included shared Google Gemini key, requests are made with that key; you can use your own key instead.
 
 ## Third-Party Services
-- **Hugging Face:** The Whisper AI model (40–600 MB depending on the model you choose) is downloaded from Hugging Face on first use and cached locally in the browser's Cache Storage. No user data is sent to Hugging Face.
+- **Hugging Face:** The speech model (40 MB to 1.6 GB depending on the model you choose) is downloaded from Hugging Face on first use and cached locally in the browser's Cache Storage. No user data is sent to Hugging Face.
 - **AI Providers (optional):** Only used by the two features above.
 
 ## Permissions

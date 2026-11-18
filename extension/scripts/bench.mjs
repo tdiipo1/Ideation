@@ -177,6 +177,22 @@ async function transcribeDirect(asr, audio, lang, prevText) {
   return asr.tokenizer.decode(ids, { skip_special_tokens: true }).trim();
 }
 
+// Moonshine (English): plain generate with a token budget tied to clip length,
+// in 25 s pieces, exactly like the worker.
+async function transcribeMoonshine(asr, audio) {
+  const piece = 16000 * 25;
+  let done = "";
+  for (let start = 0; start < audio.length; start += piece) {
+    const clip = audio.subarray(start, Math.min(audio.length, start + piece));
+    if (clip.length < 1600) break;
+    const inputs = await asr.processor(clip);
+    const out = await asr.model.generate({ ...inputs, max_new_tokens: Math.max(8, Math.ceil((clip.length / 16000) * 6.5)) });
+    const text = asr.tokenizer.decode(out.tolist()[0].map(Number), { skip_special_tokens: true }).trim();
+    if (text) done = done ? done + " " + text : text;
+  }
+  return done;
+}
+
 // ---- Main ----------------------------------------------------------------
 const { audio, rate } = readWav(wavPath);
 const secs = audio.length / 16000;
@@ -196,7 +212,9 @@ if (multilingual && language === "auto") {
 
 const t2 = performance.now();
 let text;
-if (usePipeline || secs > 28) {
+if (asr.model.config?.model_type === "moonshine") {
+  text = await transcribeMoonshine(asr, audio);
+} else if (usePipeline || secs > 28) {
   const opts = secs > 28 ? { chunk_length_s: 30, stride_length_s: 5 } : { chunk_length_s: 0 };
   if (multilingual) Object.assign(opts, { language: lang ?? "en", task: "transcribe" });
   text = (await asr(audio, opts)).text.trim();

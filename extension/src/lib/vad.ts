@@ -114,6 +114,32 @@ export function findCutPoint(region: Float32Array): CutPoint | null {
 }
 
 /** Whether the audio contains any frame above the silence floor. */
+/**
+ * Split a finished recording into pieces of at most `maxSecs`, cutting at the
+ * quietest moment in the second half of each window so words stay whole.
+ * Used for models that decode best on long, pause-aligned clips (Moonshine).
+ */
+export function splitAtPauses(audio: Float32Array, maxSecs = 22): Array<[number, number]> {
+  const max = Math.round(maxSecs * SAMPLE_RATE);
+  const pieces: Array<[number, number]> = [];
+  let start = 0;
+  while (audio.length - start > max) {
+    let best = start + max;
+    let lowest = Infinity;
+    for (let s = start + Math.floor(max / 2); s + FRAME <= start + max; s += FRAME) {
+      const rms = frameRms(audio, s, s + FRAME);
+      if (rms < lowest) {
+        lowest = rms;
+        best = s;
+      }
+    }
+    pieces.push([start, best]);
+    start = best;
+  }
+  if (audio.length > start) pieces.push([start, audio.length]);
+  return pieces;
+}
+
 export function hasSpeech(audio: Float32Array): boolean {
   if (audio.length < FRAME) return false;
   for (let s = 0; s + FRAME <= audio.length; s += FRAME) {

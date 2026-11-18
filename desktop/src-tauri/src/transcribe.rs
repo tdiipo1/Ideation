@@ -1,6 +1,14 @@
-//! Whisper inference. The loaded model (`WhisperContext`) is cached process-
-//! wide; each recording gets a `Session` that owns one `WhisperState` and the
-//! language policy for that recording (pinned code, or detect-once-then-lock).
+//! Speech-to-text inference. Two engines sit behind one `Session`:
+//!
+//! - Whisper (whisper.cpp): the loaded model (`WhisperContext`) is cached
+//!   process-wide; each recording owns one `WhisperState`.
+//! - NVIDIA Nemotron 3.5 ASR Streaming 0.6B (ONNX Runtime, through the
+//!   `parakeet-rs` crate): a model *directory* instead of a ggml file.
+//!
+//! Either way the session carries the language policy for one recording
+//! (pinned code, or detect-once-then-lock).
+
+use parakeet_rs::{ExecutionConfig, Nemotron, NemotronHandle, NemotronMode};
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -98,6 +106,91 @@ pub const LOCK_MIN_VOICED_SECS: f32 = 2.0;
 /// keep greedy: their decoder is where the time goes.
 const BEAM_SIZE: i32 = 5;
 
+// ---- Nemotron (ONNX) ------------------------------------------------------
+
+/// A Nemotron model is a directory (encoder, decoder, tokenizer); every
+/// Whisper model is a single ggml file.
+pub fn is_nemotron(model_path: &Path) -> bool {
+    model_path.is_dir()
+}
+
+struct CachedNemo {
+    path: PathBuf,
+    handle: NemotronHandle,
+    /// Keys `set_target_lang` accepts ("es", "zh-CN", "auto", …).
+    langs: Arc<Vec<&'static str>>,
+}
+
+static CACHED_NEMO: Mutex<Option<CachedNemo>> = Mutex::new(None);
+// ONNX Runtime wants exactly one environment per process.
+static ORT_CONFIG: std::sync::OnceLock<ExecutionConfig> = std::sync::OnceLock::new();
+
+fn ort_config() -> Result<ExecutionConfig, String> {
+    if let Some(c) = ORT_CONFIG.get() {
+        return Ok(c.clone());
+    }
+    let env = parakeet_rs::ort::init()
+        .build()
+        .map_err(|e| format!("Failed to start ONNX Runtime: {}", e))?;
+    let cfg = ExecutionConfig::new()
+        .with_environment(env)
+        .with_intra_threads(get_num_threads() as usize);
+    Ok(ORT_CONFIG.get_or_init(|| cfg).clone())
+}
+
+fn get_nemo(model_dir: &Path) -> Result<(Nemotron, Arc<Vec<&'static str>>), String> {
+    let mut cache = CACHED_NEMO.lock().map_err(|e| format!("Lock error: {}", e))?;
+    if let Some(c) = cache.as_ref() {
+        if c.path == model_dir {
+            return Ok((Nemotron::from_shared(&c.handle), Arc::clone(&c.langs)));
+        }
+    }
+    let handle = NemotronHandle::from_pretrained(model_dir, Some(ort_config()?))
+        .map_err(|e| format!("Failed to load Nemotron model: {}", e))?;
+    let model = Nemotron::from_shared(&handle);
+    let langs = Arc::new(handle.available_languages());
+    // Only one big model stays in memory at a time.
+    if let Ok(mut w) = CACHED_CTX.lock() {
+        *w = None;
+    }
+    ACTIVE_GPU.store(false, Ordering::Relaxed);
+    *cache = Some(CachedNemo {
+        path: model_dir.to_path_buf(),
+        handle,
+        langs: Arc::clone(&langs),
+    });
+    Ok((model, langs))
+}
+
+/// `<es-ES>` / `<en>` language-tag pieces the multilingual model emits
+/// inline; returns the bare ISO-639-1 code.
+fn lang_tag_code(piece: &str) -> Option<String> {
+    let inner = piece.trim().strip_prefix('<')?.strip_suffix('>')?;
+    let b = inner.as_bytes();
+    let ok = match b.len() {
+        2 => b.iter().all(|c| c.is_ascii_lowercase()),
+        5 => {
+            b[0].is_ascii_lowercase()
+                && b[1].is_ascii_lowercase()
+                && b[2] == b'-'
+                && b[3].is_ascii_uppercase()
+                && b[4].is_ascii_uppercase()
+        }
+        _ => false,
+    };
+    ok.then(|| inner[..2].to_string())
+}
+
+/// The model's key for an ISO-639-1 code: the bare code when it has one
+/// ("es", "de"), otherwise its first locale for that language ("zh-CN").
+fn nemo_lang_key(available: &[&'static str], code: &str) -> Option<&'static str> {
+    if let Some(k) = available.iter().find(|k| **k == code) {
+        return Some(*k);
+    }
+    let prefix = format!("{}-", code);
+    available.iter().find(|k| k.starts_with(&prefix)).copied()
+}
+
 fn load_ctx(model_path: &Path, gpu: bool) -> Result<WhisperContext, String> {
     let mut params = WhisperContextParameters::default();
     params.use_gpu(gpu);
@@ -117,6 +210,10 @@ fn get_ctx(model_path: &Path, want_gpu: bool) -> Result<Arc<WhisperContext>, Str
         if c.path == model_path && c.gpu == gpu {
             return Ok(Arc::clone(&c.ctx));
         }
+    }
+    // Only one big model stays in memory at a time.
+    if let Ok(mut n) = CACHED_NEMO.lock() {
+        *n = None;
     }
     let (ctx, used_gpu) = match load_ctx(model_path, gpu) {
         Ok(c) => (c, gpu),
@@ -150,7 +247,12 @@ pub fn preload(model_path: &Path, use_gpu: bool) -> Result<(), String> {
         return Err(format!("Model not downloaded: {}", name));
     }
     set_status("loading", &name, false, None);
-    match get_ctx(model_path, use_gpu) {
+    let loaded = if is_nemotron(model_path) {
+        get_nemo(model_path).map(|_| ())
+    } else {
+        get_ctx(model_path, use_gpu).map(|_| ())
+    };
+    match loaded {
         Ok(_) => {
             set_status("ready", &name, ACTIVE_GPU.load(Ordering::Relaxed), None);
             Ok(())
@@ -173,19 +275,47 @@ pub struct TranscribeOutput {
 /// language policy. Create it when recording starts, feed it every streaming
 /// segment and finally the tail.
 pub struct Session {
-    ctx: Arc<WhisperContext>,
-    state: WhisperState,
+    engine: Engine,
     /// The user's setting: "auto" or an ISO-639-1 code.
     setting: String,
     /// Language committed for the rest of the recording.
     locked: Option<String>,
-    /// Large models decode greedily (their decoder dominates the time);
-    /// everything else uses beam search.
-    heavy: bool,
+}
+
+enum Engine {
+    Whisper {
+        ctx: Arc<WhisperContext>,
+        state: WhisperState,
+        /// Large models decode greedily (their decoder dominates the time);
+        /// everything else uses beam search.
+        heavy: bool,
+    },
+    Nemotron {
+        model: Box<Nemotron>,
+        langs: Arc<Vec<&'static str>>,
+    },
 }
 
 impl Session {
     pub fn new(model_path: &Path, language_setting: &str, use_gpu: bool) -> Result<Self, String> {
+        if is_nemotron(model_path) {
+            let (model, langs) = get_nemo(model_path)?;
+            let setting = if language_setting != "auto"
+                && nemo_lang_key(&langs, language_setting).is_some()
+            {
+                language_setting.to_string()
+            } else {
+                "auto".to_string()
+            };
+            return Ok(Self {
+                engine: Engine::Nemotron {
+                    model: Box::new(model),
+                    langs,
+                },
+                setting,
+                locked: None,
+            });
+        }
         let ctx = get_ctx(model_path, use_gpu)?;
         let state = ctx
             .create_state()
@@ -200,22 +330,23 @@ impl Session {
             .map(|n| n.to_string_lossy().contains("large"))
             .unwrap_or(false);
         Ok(Self {
-            ctx,
-            state,
+            engine: Engine::Whisper { ctx, state, heavy },
             setting,
             locked: None,
-            heavy,
         })
     }
 
     pub fn is_multilingual(&self) -> bool {
-        self.ctx.is_multilingual()
+        match &self.engine {
+            Engine::Whisper { ctx, .. } => ctx.is_multilingual(),
+            Engine::Nemotron { model, .. } => model.mode() == NemotronMode::Multilingual,
+        }
     }
 
     /// The language this session is committed to, if any. English-only
     /// models are always "en".
     pub fn locked_language(&self) -> Option<&str> {
-        if !self.ctx.is_multilingual() {
+        if !self.is_multilingual() {
             return Some("en");
         }
         self.locked.as_deref()
@@ -235,11 +366,24 @@ impl Session {
         voiced_secs: f32,
         prompt: Option<&str>,
     ) -> Result<TranscribeOutput, String> {
+        let (ctx, state, heavy) = match &mut self.engine {
+            Engine::Nemotron { model, langs } => {
+                return nemo_transcribe(
+                    model,
+                    langs,
+                    &self.setting,
+                    &mut self.locked,
+                    audio,
+                    voiced_secs,
+                )
+            }
+            Engine::Whisper { ctx, state, heavy } => (ctx, state, *heavy),
+        };
         // Decide the language for this call. whisper.cpp's default is "en",
         // so multilingual models must be told "auto" explicitly — and "auto"
         // costs an extra encoder pass, which is why we lock as soon as a
         // segment with enough speech has been detected.
-        let multilingual = self.ctx.is_multilingual();
+        let multilingual = ctx.is_multilingual();
         let lang: String = match (&self.locked, self.setting.as_str(), multilingual) {
             (_, _, false) => "en".to_string(),
             (Some(l), _, true) => l.clone(),
@@ -247,7 +391,7 @@ impl Session {
             (None, code, true) => code.to_string(),
         };
 
-        let strategy = if self.heavy {
+        let strategy = if heavy {
             SamplingStrategy::Greedy { best_of: 5 }
         } else {
             SamplingStrategy::BeamSearch {
@@ -278,21 +422,21 @@ impl Session {
             params.set_initial_prompt(p);
         }
 
-        self.state
+        state
             .full(params, audio)
             .map_err(|e| format!("Transcription failed: {}", e))?;
 
-        let num_segments = self.state.full_n_segments();
+        let num_segments = state.full_n_segments();
         let mut text = String::new();
         for i in 0..num_segments {
-            if let Some(segment) = self.state.get_segment(i) {
+            if let Some(segment) = state.get_segment(i) {
                 if let Ok(s) = segment.to_str_lossy() {
                     text.push_str(&s);
                 }
             }
         }
 
-        let detected = whisper_rs::get_lang_str(self.state.full_lang_id_from_state())
+        let detected = whisper_rs::get_lang_str(state.full_lang_id_from_state())
             .map(|s| s.to_string());
         if lang == "auto" && voiced_secs >= LOCK_MIN_VOICED_SECS {
             if let Some(code) = detected.as_ref() {
@@ -311,6 +455,61 @@ impl Session {
             language: detected,
         })
     }
+}
+
+/// One clip through Nemotron. The streaming model is run start-to-finish on
+/// the clip (the app already cuts audio at pauses). It takes no text prompt;
+/// in "auto" it tags the language it heard, which is what gets locked.
+fn nemo_transcribe(
+    model: &mut Nemotron,
+    langs: &[&'static str],
+    setting: &str,
+    locked: &mut Option<String>,
+    audio: &[f32],
+    voiced_secs: f32,
+) -> Result<TranscribeOutput, String> {
+    let multilingual = model.mode() == NemotronMode::Multilingual;
+    let want: Option<String> = locked
+        .clone()
+        .or_else(|| (setting != "auto").then(|| setting.to_string()));
+    if multilingual {
+        let key = want
+            .as_deref()
+            .and_then(|c| nemo_lang_key(langs, c))
+            .unwrap_or("auto");
+        model
+            .set_target_lang(key)
+            .map_err(|e| format!("Language not supported by this model: {}", e))?;
+    }
+    let tokens = model
+        .transcribe_audio_with_tokens(audio)
+        .map_err(|e| format!("Transcription failed: {}", e))?;
+    let mut text = String::new();
+    let mut tagged: Option<String> = None;
+    for t in tokens {
+        if let Some(code) = lang_tag_code(&t.text) {
+            tagged.get_or_insert(code);
+        } else {
+            text.push_str(&t.text);
+        }
+    }
+    let language = if !multilingual {
+        Some("en".to_string())
+    } else {
+        want.or(tagged)
+    };
+    if multilingual && locked.is_none() && setting == "auto" && voiced_secs >= LOCK_MIN_VOICED_SECS
+    {
+        if let Some(code) = language.as_ref() {
+            *locked = Some(code.clone());
+        }
+    }
+    // The model puts two spaces after sentence ends; collapse runs of spaces.
+    let text = text.split(' ').filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
+    Ok(TranscribeOutput {
+        text: text.trim().to_string(),
+        language,
+    })
 }
 
 #[cfg(test)]
@@ -373,5 +572,29 @@ mod bench {
             get_num_threads()
         );
         println!("TEXT: {}", out.text);
+    }
+}
+
+#[cfg(test)]
+mod nemo_tests {
+    use super::*;
+
+    #[test]
+    fn language_tags_become_iso_codes() {
+        assert_eq!(lang_tag_code("<es-ES>").as_deref(), Some("es"));
+        assert_eq!(lang_tag_code(" <en>").as_deref(), Some("en"));
+        assert_eq!(lang_tag_code("<zh-CN>").as_deref(), Some("zh"));
+        assert_eq!(lang_tag_code("hello"), None);
+        assert_eq!(lang_tag_code("<unk>"), None);
+        assert_eq!(lang_tag_code("<EN-us>"), None);
+    }
+
+    #[test]
+    fn iso_codes_map_to_model_keys() {
+        let keys = ["auto", "en", "en-US", "es", "es-ES", "ja-JP", "zh-CN", "zh-TW"];
+        assert_eq!(nemo_lang_key(&keys, "es"), Some("es"));
+        assert_eq!(nemo_lang_key(&keys, "zh"), Some("zh-CN"));
+        assert_eq!(nemo_lang_key(&keys, "ja"), Some("ja-JP"));
+        assert_eq!(nemo_lang_key(&keys, "xx"), None);
     }
 }

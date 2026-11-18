@@ -14,6 +14,56 @@ pub struct ModelInfo {
     pub size_mb: u64,
     /// English-only checkpoints can't transcribe other languages at all.
     pub english_only: bool,
+    /// Multi-file models: `filename` is then a directory under the models
+    /// folder holding these files. Empty for single-file (ggml) models.
+    #[serde(default)]
+    pub files: Vec<ModelFile>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ModelFile {
+    pub name: String,
+    pub url: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+}
+
+/// ONNX export of nvidia/nemotron-3.5-asr-streaming-0.6b published with the
+/// parakeet-rs crate. Hashes are the repository's LFS object ids.
+const NEMOTRON_BASE: &str =
+    "https://huggingface.co/altunenes/parakeet-rs/resolve/main/nemotron-3.5-asr-streaming-0.6b-onnx/";
+
+fn nemotron_files() -> Vec<ModelFile> {
+    [
+        (
+            "tokenizer.model",
+            "ce3895e40806f02a26c3a225161b96ef682d6c0054bae32a245dec4258d7d291",
+            400_000u64,
+        ),
+        (
+            "decoder_joint.onnx",
+            "a4258dfb3a4c5c15ef3ff7e52483bf9b4fcf721ae5a8d2dac777178e8fa39252",
+            97_700_000,
+        ),
+        (
+            "encoder.onnx",
+            "487519292b5b12178442dabc9ad5803f859354680ec929140d4027dceb16a20d",
+            4_200_000,
+        ),
+        (
+            "encoder.onnx.data",
+            "1cdddec47b0570170183716dff74df8ca827facb41b11302ebdd479616171988",
+            2_495_400_000,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, sha, size)| ModelFile {
+        name: name.to_string(),
+        url: format!("{}{}", NEMOTRON_BASE, name),
+        sha256: sha.to_string(),
+        size_bytes: size,
+    })
+    .collect()
 }
 
 pub fn available_models() -> Vec<ModelInfo> {
@@ -32,6 +82,7 @@ pub fn available_models() -> Vec<ModelInfo> {
             sha256: "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"
                 .to_string(),
             size_mb: 142,
+            files: Vec::new(),
         },
         ModelInfo {
             name: "small.en".to_string(),
@@ -44,6 +95,7 @@ pub fn available_models() -> Vec<ModelInfo> {
             sha256: "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d"
                 .to_string(),
             size_mb: 466,
+            files: Vec::new(),
         },
         ModelInfo {
             name: "base".to_string(),
@@ -56,6 +108,7 @@ pub fn available_models() -> Vec<ModelInfo> {
             sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
                 .to_string(),
             size_mb: 142,
+            files: Vec::new(),
         },
         ModelInfo {
             name: "small".to_string(),
@@ -67,6 +120,7 @@ pub fn available_models() -> Vec<ModelInfo> {
                 .to_string(),
             sha256: "".to_string(),
             size_mb: 466,
+            files: Vec::new(),
         },
         ModelInfo {
             name: "large-v3-turbo".to_string(),
@@ -78,6 +132,7 @@ pub fn available_models() -> Vec<ModelInfo> {
                 .to_string(),
             sha256: "".to_string(),
             size_mb: 574,
+            files: Vec::new(),
         },
         ModelInfo {
             name: "distil-large-v3.5".to_string(),
@@ -89,6 +144,20 @@ pub fn available_models() -> Vec<ModelInfo> {
                 .to_string(),
             sha256: "".to_string(),
             size_mb: 1520,
+            files: Vec::new(),
+        },
+        ModelInfo {
+            name: "nemotron-3.5-streaming".to_string(),
+            english_only: false,
+            label: "NVIDIA Nemotron 3.5 (Multilingual)".to_string(),
+            description:
+                "NVIDIA's speech model, 40 languages. Large download; best on fast machines."
+                    .to_string(),
+            filename: "nemotron-3.5-asr-streaming-0.6b".to_string(),
+            url: String::new(),
+            sha256: String::new(),
+            size_mb: 2600,
+            files: nemotron_files(),
         },
     ]
 }
@@ -108,6 +177,7 @@ pub fn vad_model() -> ModelInfo {
             .to_string(),
         sha256: "".to_string(),
         size_mb: 1,
+        files: Vec::new(),
     }
 }
 
@@ -159,7 +229,96 @@ pub fn ensure_bundled_model(app: &AppHandle) {
     }
 }
 
+/// Download every file of a multi-file model into `<dir>.downloading/`,
+/// then rename the directory into place, so a half-downloaded model never
+/// looks installed. Files already fetched by an interrupted run are kept.
+async fn download_model_dir(app: &AppHandle, model: &ModelInfo) -> Result<PathBuf, String> {
+    let dir = models_dir();
+    let final_dir = dir.join(&model.filename);
+    if final_dir.is_dir() {
+        return Ok(final_dir);
+    }
+    let temp_dir = dir.join(format!("{}.downloading", &model.filename));
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("Failed to create models dir: {}", e))?;
+
+    let total: u64 = model.files.iter().map(|f| f.size_bytes).sum();
+    let mut done: u64 = 0;
+    let client = reqwest::Client::new();
+    let mut last_emit = std::time::Instant::now();
+    let mut last_progress: u32 = 0;
+
+    for f in &model.files {
+        let dest = temp_dir.join(&f.name);
+        if dest.exists() {
+            done += f.size_bytes;
+            continue;
+        }
+        let part = temp_dir.join(format!("{}.part", &f.name));
+        let response = client
+            .get(&f.url)
+            .send()
+            .await
+            .map_err(|e| format!("Download request failed: {}", e))?;
+        if !response.status().is_success() {
+            return Err(format!("Download failed ({}): {}", response.status(), f.name));
+        }
+        let mut file = std::fs::File::create(&part)
+            .map_err(|e| format!("Failed to create temp file: {}", e))?;
+        let mut stream = response.bytes_stream();
+        let mut hasher = Sha256::new();
+        let mut got: u64 = 0;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
+            std::io::Write::write_all(&mut file, &chunk)
+                .map_err(|e| format!("Write error: {}", e))?;
+            hasher.update(&chunk);
+            got += chunk.len() as u64;
+            if total > 0 && last_emit.elapsed() > std::time::Duration::from_millis(200) {
+                let progress = (((done + got) as f64 / total as f64) * 100.0).min(100.0) as u32;
+                if progress != last_progress {
+                    let _ = app.emit(
+                        "model-download-progress",
+                        serde_json::json!({
+                            "model": model.name,
+                            "progress": progress,
+                            "downloaded_mb": (done + got) / 1_000_000,
+                            "total_mb": total / 1_000_000,
+                        }),
+                    );
+                    last_progress = progress;
+                }
+                last_emit = std::time::Instant::now();
+            }
+        }
+        drop(file);
+        if !f.sha256.is_empty() {
+            let hash = hex::encode(hasher.finalize());
+            if hash != f.sha256 {
+                let _ = std::fs::remove_file(&part);
+                return Err(format!(
+                    "Hash mismatch for {}: expected {}, got {}",
+                    f.name, f.sha256, hash
+                ));
+            }
+        }
+        std::fs::rename(&part, &dest).map_err(|e| format!("Failed to rename file: {}", e))?;
+        done += f.size_bytes;
+    }
+
+    std::fs::rename(&temp_dir, &final_dir)
+        .map_err(|e| format!("Failed to finish model install: {}", e))?;
+    let _ = app.emit(
+        "model-download-complete",
+        serde_json::json!({ "model": model.name }),
+    );
+    Ok(final_dir)
+}
+
 pub async fn download_model(app: &AppHandle, model: &ModelInfo) -> Result<PathBuf, String> {
+    if !model.files.is_empty() {
+        return download_model_dir(app, model).await;
+    }
     let dir = models_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create models dir: {}", e))?;
 
