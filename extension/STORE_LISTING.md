@@ -21,7 +21,7 @@ In the [developer dashboard](https://chrome.google.com/webstore/devconsole/):
 6. **Privacy practices.** Nothing changes: no data is collected. Re-certify if the form asks.
 7. **Distribution.** All regions, public.
 
-After uploading 0.2.1 (name change), the review takes the usual few days; the description and assets go live immediately once saved and published.
+After uploading a new package, the review takes the usual few days; the description and assets go live immediately once saved and published.
 
 ---
 
@@ -275,8 +275,8 @@ cd extension
 npm install
 npm run build
 # Windows PowerShell
-Compress-Archive -Path dist-full\* -DestinationPath release\ideation-full-0.2.1.zip -Force
-Compress-Archive -Path dist-lite\* -DestinationPath release\ideation-lite-0.2.1.zip -Force
+Compress-Archive -Path dist-full\* -DestinationPath release\ideation-full-0.2.2.zip -Force
+Compress-Archive -Path dist-lite\* -DestinationPath release\ideation-lite-0.2.2.zip -Force
 ```
 
 Each zip is about 5.5 MB (one ONNX Runtime binary; models are downloaded on first use). The Full build reads the shared Gemini key from `VITE_SHARED_GEMINI_KEY` in `extension/.env`.

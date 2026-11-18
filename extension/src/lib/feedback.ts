@@ -3,9 +3,8 @@
 // - a recording counter that unlocks a one-time "rate it" card after a few
 //   successful recordings (state lives in chrome.storage.local, or in the
 //   panel's localStorage for the Lite edition, which has no storage permission);
-// - a Feedback link to a prefilled GitHub issue;
-// - the page Chrome opens when the extension is uninstalled (a prefilled
-//   GitHub issue with a short checklist).
+// - a Feedback link to a short Google Form (no sign-in needed);
+// - the page Chrome opens when the extension is uninstalled (the same form).
 //
 // Nothing is sent anywhere unless the user clicks a link and submits the page
 // it opens. The Chrome Web Store dashboard shows clicks on the rating link as
@@ -13,8 +12,6 @@
 
 const RATING_AFTER_RECORDINGS = 10;
 const STORAGE_KEY = "feedback";
-
-export const REPO_URL = "https://github.com/tdiipo1/Ideation";
 
 interface FeedbackState {
   recordings: number;
@@ -100,35 +97,29 @@ export function ratingUrl(): string {
   return `https://chromewebstore.google.com/detail/${chrome.runtime.id}/reviews?utm_source=extension&utm_medium=rating_card&utm_campaign=${campaign}`;
 }
 
-/** Prefilled GitHub issue for general feedback. */
-export function feedbackUrl(): string {
-  const body = `\n\n---\n${buildLine()}`;
-  return `${REPO_URL}/issues/new?labels=feedback&body=${encodeURIComponent(body)}`;
+// A Google Form that anyone can answer without signing in (a GitHub issue
+// link sends signed-out visitors to a login page, so almost nobody answered).
+// Its "Version" question is prefilled with the build line and where the
+// visitor came from. Responses go to the form owner's Google Forms inbox.
+const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSco_jHPDSxgMUF29wpqRX5D3n1NkDb6V9TOhmLxm0sQqQZdfg/viewform";
+const FORM_VERSION_ENTRY = "entry.216262963";
+
+function formUrl(source: "feedback" | "uninstall"): string {
+  const details = `${buildLine()} · ${source}`;
+  const url = `${FORM_URL}?usp=pp_url&${FORM_VERSION_ENTRY}=${encodeURIComponent(details)}`;
+  // chrome.runtime.setUninstallURL rejects URLs over 1023 characters.
+  if (url.length > 1023) console.warn(`Feedback form URL is ${url.length} chars; Chrome allows 1023`);
+  return url;
 }
 
-/**
- * Page Chrome opens after the extension is uninstalled. A prefilled GitHub
- * issue with a checklist; swap this for a form link (Tally, Google Forms…)
- * if you want answers from people without a GitHub account. Chrome limits
- * the URL to 1023 characters.
- */
+/** Feedback link in the panel footer. */
+export function feedbackUrl(): string {
+  return formUrl("feedback");
+}
+
+/** Page Chrome opens after the extension is uninstalled. */
 export function uninstallSurveyUrl(): string {
-  const body = [
-    "Sorry to see you go. Why did you uninstall? Tick what applies and submit.",
-    "",
-    "- [ ] It didn't work on my machine",
-    "- [ ] Transcription accuracy",
-    "- [ ] Too slow, or the model download",
-    "- [ ] I don't need it anymore",
-    "- [ ] Privacy or permissions concern",
-    "- [ ] Other:",
-    "",
-    "---",
-    buildLine(),
-  ].join("\n");
-  const url = `${REPO_URL}/issues/new?labels=uninstall&title=${encodeURIComponent("Uninstall feedback")}&body=${encodeURIComponent(body)}`;
-  if (url.length > 1023) console.warn(`Uninstall URL is ${url.length} chars; Chrome allows 1023`);
-  return url;
+  return formUrl("uninstall");
 }
 
 /** Open a link in a new tab from the side panel. */

@@ -1,6 +1,6 @@
 # Privacy Policy — Ideation Chrome Extension
 
-**Last updated:** November 1, 2026
+**Last updated:** November 17, 2026
 
 ## Summary
 Ideation processes all audio and transcription locally on your device. We do not collect, store, or transmit any user data.
@@ -17,10 +17,10 @@ Ideation processes all audio and transcription locally on your device. We do not
 The extension never sends anything on its own. Three places open a web page in a new tab, and only when you act:
 
 - **"Rate it" card:** after about ten recordings the side panel offers, once, a link to the extension's page on the Chrome Web Store. Choosing "Not now" hides it for good. The recording count is stored locally and never transmitted.
-- **"Feedback" link** in the panel footer: opens a new GitHub issue prefilled with the extension edition, its version and your Chrome version.
-- **Uninstall page:** when you remove the extension, Chrome opens a GitHub page with a short "why did you uninstall" checklist. Nothing is submitted unless you choose to.
+- **"Feedback" link** in the panel footer: opens a short Google Form. No sign-in is needed.
+- **Uninstall page:** when you remove the extension, Chrome opens the same form, which asks why you uninstalled.
 
-GitHub's privacy policy applies to anything you submit there.
+The form's "Version" field is filled in automatically with the extension edition, its version, your Chrome version and which of the two links you followed. Nothing is submitted unless you press Submit, the form does not collect your email address, and only the developer can see the answers. Google's privacy policy applies to the form.
 
 ## AI Features That Send Text (Ideation Full only)
 Two optional features send the *text* of a transcript (never audio) directly from your browser to the AI provider you selected (Google Gemini, OpenAI, Anthropic, or Groq):
